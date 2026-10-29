@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using HapasVault.Controls;
 using HapasVault.Services;
 using HapasVault.Theming;
 using HapasVault.ViewModels;
@@ -24,13 +25,14 @@ internal static class Screenshots
         window.Top = 0;
         var errors = new List<string>();
 
-        async Task Shot(string name, Func<Task> setup)
+        async Task Shot(string name, Func<Task> setup, Func<Window?>? over = null)
         {
             try
             {
                 await setup();
                 await Settle();
-                Save(window, Path.Combine(dir, name + ".png"));
+                if (over?.Invoke() is { } o) SaveComposite(window, o, Path.Combine(dir, name + ".png"));
+                else Save(window, Path.Combine(dir, name + ".png"));
                 Console.WriteLine($"ok   {name}");
             }
             catch (Exception e)
@@ -162,6 +164,60 @@ internal static class Screenshots
             ((VaultShellViewModel)shell.Page!).Section = Section.Settings;
         });
 
+        // ---------- радиальное меню и автоввод ----------
+        shell.Radial ??= new Radial.RadialController(shell);
+        Radial.RadialWindow? overlay = null;
+        await Shot("18-radial", async () =>
+        {
+            var items = await shell.Token.ListAsync();
+            overlay = shell.Radial.ShowForTest(Radial.RadialController.Group(items), "Ввод в «Вход — Google Chrome»");
+            await Settle();
+            var m = overlay.Menu;
+            m.Track(new Point(m.ActualWidth / 2 + 150, m.ActualHeight / 2 - 60));
+        }, () => overlay);
+
+        await Shot("19-radial-rings", async () =>
+        {
+            var many = new List<HapasVault.Core.VaultItem>();
+            string[] cats = ["Почта", "Работа", "Банки", "Соцсети", "Игры"];
+            string[] names = ["Яндекс", "Gmail", "Outlook", "GitLab", "Jira", "VPN", "Confluence", "Сбербанк", "Тинькофф",
+                              "Альфа", "Telegram", "ВКонтакте", "Discord", "Steam", "Epic", "Battle.net", "Proton", "Slack", "Figma", "ВТБ"];
+            for (int i = 0; i < names.Length; i++) many.Add(new HapasVault.Core.VaultItem((uint)i + 1, cats[i % cats.Length], names[i]));
+            overlay = shell.Radial.ShowForTest(Radial.RadialController.Group(many), "Ввод в «Вход — Google Chrome»");
+            await Settle();
+            var m = overlay.Menu;
+            var c = new Point(m.ActualWidth / 2, m.ActualHeight / 2);
+            m.Track(c + new Vector(40, -110));    // категория справа сверху
+            await Task.Delay(400);
+            m.Track(c + new Vector(150, -200));   // дальше — запись в веере
+        }, () => overlay);
+        shell.Radial.Close();
+
+        await Shot("20-autotype", async () =>
+        {
+            var box1 = new System.Windows.Controls.TextBox { Margin = new Thickness(20), FontSize = 18 };
+            var box2 = new System.Windows.Controls.TextBox { Margin = new Thickness(20), FontSize = 18 };
+            var test = new Window
+            {
+                Title = "Автоввод — тест",
+                Width = 420, Height = 200, Left = 100, Top = 100,
+                Content = new System.Windows.Controls.StackPanel { Children = { box1, box2 } },
+            };
+            test.Show();
+            test.Activate();
+            box1.Focus();
+            await Task.Delay(300);
+            var cred = new HapasVault.Core.Credential("ivan.petrov", "Пароль-123 @#$ 🔑");
+            bool ok = await Platform.AutoType.TypeAsync(Radial.RadialController.Sequence(cred, AutoTypeMode.LoginPassword, pressEnter: false));
+            await Task.Delay(300);
+            string got = $"«{box1.Text}» / «{box2.Text}»";
+            test.Close();
+            if (!ok) throw new InvalidOperationException("SendInput не принял ввод");
+            if (box1.Text != cred.Login || box2.Text != cred.Password)
+                throw new InvalidOperationException("автоввод набрал не то: " + got);
+            Console.WriteLine("     autotype: " + got);
+        });
+
         if (errors.Count > 0)
         {
             File.WriteAllLines(Path.Combine(dir, "errors.txt"), errors);
@@ -177,22 +233,49 @@ internal static class Screenshots
         await Application.Current.Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
     }
 
-    private static void Save(Window w, string path)
+    // главное окно и полупрозрачный оверлей поверх него — как видит пользователь
+    private static void SaveComposite(Window main, Window overlay, string path)
+    {
+        var root = (FrameworkElement)overlay.Content;
+        var dpi = VisualTreeHelper.GetDpi(overlay);
+        var under = Render(main);
+        var bmp = new RenderTargetBitmap(
+            (int)Math.Ceiling(root.ActualWidth * dpi.DpiScaleX), (int)Math.Ceiling(root.ActualHeight * dpi.DpiScaleY),
+            dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
+        var bg = new DrawingVisual();
+        using (var dc = bg.RenderOpen())
+        {
+            dc.DrawRectangle((Brush)Application.Current.FindResource("SurfaceDim"), null, new Rect(0, 0, root.ActualWidth, root.ActualHeight));
+            var mainRoot = (FrameworkElement)main.Content;
+            dc.DrawImage(under, new Rect(main.Left - overlay.Left, main.Top - overlay.Top, mainRoot.ActualWidth, mainRoot.ActualHeight));
+        }
+        bmp.Render(bg);
+        bmp.Render(root);
+        Encode(bmp, path);
+    }
+
+    private static RenderTargetBitmap Render(Window w)
     {
         var root = (FrameworkElement)w.Content;
         var dpi = VisualTreeHelper.GetDpi(w);
         var bmp = new RenderTargetBitmap(
             (int)Math.Ceiling(root.ActualWidth * dpi.DpiScaleX), (int)Math.Ceiling(root.ActualHeight * dpi.DpiScaleY),
             dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
-        // фон окна (Window.Background) не входит в корневой Grid — рисуем его отдельно
         var bg = new DrawingVisual();
         using (var dc = bg.RenderOpen())
             dc.DrawRectangle(w.Background, null, new Rect(0, 0, root.ActualWidth, root.ActualHeight));
         bmp.Render(bg);
         bmp.Render(root);
+        return bmp;
+    }
+
+    private static void Encode(BitmapSource bmp, string path)
+    {
         var enc = new PngBitmapEncoder();
         enc.Frames.Add(BitmapFrame.Create(bmp));
         using var f = File.Create(path);
         enc.Save(f);
     }
+
+    private static void Save(Window w, string path) => Encode(Render(w), path);
 }

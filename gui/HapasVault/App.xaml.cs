@@ -2,7 +2,9 @@ using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
+using System.Windows.Interop;
 using HapasVault.Core;
+using HapasVault.Platform;
 using HapasVault.Services;
 using HapasVault.Theming;
 using HapasVault.ViewModels;
@@ -74,9 +76,16 @@ public partial class App : Application
             Shutdown(code);
             return;
         }
+        _shell.Radial = new Radial.RadialController(_shell);
+        _shell.Hotkey = new GlobalHotkey(new WindowInteropHelper(window).Handle);
+        _shell.Hotkey.Pressed += async (_, _) => await _shell.Radial.ToggleAsync();
+        bool hotkeyOk = _shell.ApplyHotkey();
+
         if (demo) await _shell.EnterDemoAsync();
         await _shell.StartAsync();
         if (nativeProblem != null) _shell.Snackbar.Show(nativeProblem);
+        if (!hotkeyOk)
+            _shell.Snackbar.Show($"Сочетание {GlobalHotkey.Describe(settings.Hotkey)} занято другой программой — выберите другое в настройках");
     }
 
     private static string? ArgValue(string[] args, string name)

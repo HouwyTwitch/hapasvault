@@ -5,6 +5,7 @@ using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HapasVault.Core;
+using HapasVault.Platform;
 using HapasVault.Theming;
 using Microsoft.Win32;
 
@@ -81,6 +82,9 @@ public sealed partial class SettingsViewModel : ObservableObject
         LockWithWindows = s.LockWithWindows;
         ClearClipboard = s.ClearClipboard;
         PortText = s.Port.ToString(CultureInfo.InvariantCulture);
+        RadialEnabled = s.RadialEnabled;
+        Hotkey = s.Hotkey;
+        AutoTypeEnter = s.AutoTypeEnter;
         _loading = false;
     }
 
@@ -97,6 +101,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _portText = "";
     [ObservableProperty] private string? _portError;
     [ObservableProperty] private string _tokenText = "";
+    [ObservableProperty] private bool _radialEnabled;
+    [ObservableProperty] private HotkeyChoice _hotkey;
+    [ObservableProperty] private bool _autoTypeEnter;
 
     private static uint ToArgb(Color c) => (uint)(c.A << 24 | c.R << 16 | c.G << 8 | c.B);
 
@@ -129,6 +136,17 @@ public sealed partial class SettingsViewModel : ObservableObject
     partial void OnAutoLockChanged(int value) => Save(s => s.AutoLockMinutes = value);
     partial void OnLockWithWindowsChanged(bool value) => Save(s => s.LockWithWindows = value);
     partial void OnClearClipboardChanged(bool value) => Save(s => s.ClearClipboard = value);
+    partial void OnAutoTypeEnterChanged(bool value) => Save(s => s.AutoTypeEnter = value);
+    partial void OnRadialEnabledChanged(bool value) => SaveHotkey(s => s.RadialEnabled = value);
+    partial void OnHotkeyChanged(HotkeyChoice value) => SaveHotkey(s => s.Hotkey = value);
+
+    private void SaveHotkey(Action<Services.AppSettings> change)
+    {
+        if (_loading) return;
+        Save(change);
+        if (!_shell.ApplyHotkey())
+            _shell.Snackbar.Show($"Сочетание {GlobalHotkey.Describe(Hotkey)} занято другой программой — выберите другое");
+    }
 
     private void Save(Action<Services.AppSettings> change)
     {

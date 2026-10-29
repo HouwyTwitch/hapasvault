@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using HapasVault.Platform;
 using HapasVault.Theming;
 
 namespace HapasVault.Services;
@@ -25,6 +26,10 @@ public sealed class AppSettings
     public bool ClearClipboard { get; set; } = true;
     public int ClipboardSeconds { get; set; } = 30;
     public ushort Port { get; set; } = 47123;
+    public bool RadialEnabled { get; set; } = true;
+    public HotkeyChoice Hotkey { get; set; } = HotkeyChoice.CtrlAltSpace;
+    /// <summary>Нажимать Enter после автоввода пароля.</summary>
+    public bool AutoTypeEnter { get; set; } = true;
 
     private static readonly JsonSerializerOptions Json = new()
     {

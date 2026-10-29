@@ -4,6 +4,7 @@ using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HapasVault.Core;
+using HapasVault.Platform;
 using HapasVault.Services;
 using HapasVault.Theming;
 using Microsoft.Win32;
@@ -53,6 +54,11 @@ public sealed partial class ShellViewModel : ObservableObject
     public ThemeManager Theme { get; }
     public SnackbarViewModel Snackbar { get; } = new();
     public SecretClipboard Clipboard { get; } = new();
+    public Radial.RadialController? Radial { get; set; }
+    public GlobalHotkey? Hotkey { get; set; }
+
+    /// <summary>Зарегистрировать сочетание радиального меню по настройкам. false — занято.</summary>
+    public bool ApplyHotkey() => Hotkey == null || Hotkey.Set(Settings.RadialEnabled ? Settings.Hotkey : null);
 
     [ObservableProperty] private object? _page;
     [ObservableProperty] private DialogViewModel? _dialog;
@@ -251,6 +257,7 @@ public sealed partial class ShellViewModel : ObservableObject
     public async Task LockAsync(string? reason = null)
     {
         if (Page is not VaultShellViewModel) return;
+        Radial?.Close();
         Clipboard.Clear();
         Dialog?.Close(false);
         await RunAsync(() => Token.LockAsync());
@@ -323,6 +330,8 @@ public sealed partial class ShellViewModel : ObservableObject
     {
         _poll.Stop();
         _idle.Stop();
+        Radial?.Close();
+        Hotkey?.Dispose();
         Clipboard.Clear();
         Token.Dispose();
         if (!ReferenceEquals(Token, _real)) _real.Dispose();

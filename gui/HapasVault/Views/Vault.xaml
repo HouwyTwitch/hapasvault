@@ -373,6 +373,44 @@
           </StackPanel>
         </Border>
 
+        <!-- радиальное меню -->
+        <TextBlock Style="{StaticResource Section}" Text="Радиальное меню" />
+        <Border Style="{StaticResource SettingRow}" CornerRadius="28,28,6,6">
+          <DockPanel>
+            <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Switch}" IsChecked="{Binding RadialEnabled}" VerticalAlignment="Center" />
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock Style="{StaticResource SettingTitle}" Text="Вызов в любом приложении" />
+              <TextBlock Style="{StaticResource SettingHint}"
+                         Text="Меню появляется под курсором; запись выбирается движением мыши, набор текста — поиск. Выбранная запись вводится в окно, где вы были." />
+            </StackPanel>
+          </DockPanel>
+        </Border>
+        <Border Style="{StaticResource SettingRow}">
+          <DockPanel IsEnabled="{Binding RadialEnabled}">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+              <RadioButton Style="{StaticResource Connected}" c:A.Position="First" Content="Ctrl+Alt+Space"
+                           IsChecked="{Binding Hotkey, Converter={StaticResource Equals}, ConverterParameter=CtrlAltSpace}" />
+              <RadioButton Style="{StaticResource Connected}" c:A.Position="Middle" Content="Ctrl+Shift+Space"
+                           IsChecked="{Binding Hotkey, Converter={StaticResource Equals}, ConverterParameter=CtrlShiftSpace}" />
+              <RadioButton Style="{StaticResource Connected}" c:A.Position="Last" Content="Ctrl+Alt+P" Margin="0"
+                           IsChecked="{Binding Hotkey, Converter={StaticResource Equals}, ConverterParameter=CtrlAltP}" />
+            </StackPanel>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock Style="{StaticResource SettingTitle}" Text="Сочетание клавиш" />
+              <TextBlock Style="{StaticResource SettingHint}" Text="Работает, пока HapasVault запущен (можно свернуть)" />
+            </StackPanel>
+          </DockPanel>
+        </Border>
+        <Border Style="{StaticResource SettingRow}" CornerRadius="6,6,28,28">
+          <DockPanel>
+            <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Switch}" IsChecked="{Binding AutoTypeEnter}" VerticalAlignment="Center" />
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock Style="{StaticResource SettingTitle}" Text="Нажимать Enter после ввода" />
+              <TextBlock Style="{StaticResource SettingHint}" Text="ЛКМ — логин ⇥ пароль, ПКМ — только пароль, Shift+ЛКМ — только логин" />
+            </StackPanel>
+          </DockPanel>
+        </Border>
+
         <!-- безопасность -->
         <TextBlock Style="{StaticResource Section}" Text="Безопасность" />
         <Border Style="{StaticResource SettingRow}" CornerRadius="28,28,6,6">
