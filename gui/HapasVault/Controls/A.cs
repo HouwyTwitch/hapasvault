@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -115,6 +116,39 @@ public static class A
             a.KeyFrames.Add(new EasingDoubleKeyFrame(xs[i], KeyTime.FromPercent(i / (double)(xs.Length - 1)),
                 new SineEase { EasingMode = EasingMode.EaseInOut }));
         tt.BeginAnimation(TranslateTransform.XProperty, a);
+    }
+
+    // ---- слайдер: нажатие в любом месте дорожки сразу начинает перетаскивание ----
+    public static readonly DependencyProperty DragAnywhereProperty = DependencyProperty.RegisterAttached(
+        "DragAnywhere", typeof(bool), typeof(A), new PropertyMetadata(false, OnDragAnywhere));
+    public static bool GetDragAnywhere(DependencyObject o) => (bool)o.GetValue(DragAnywhereProperty);
+    public static void SetDragAnywhere(DependencyObject o, bool v) => o.SetValue(DragAnywhereProperty, v);
+
+    private static void OnDragAnywhere(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not Slider s) return;
+        if (e.NewValue is true) s.PreviewMouseLeftButtonDown += OnSliderDown;
+        else s.PreviewMouseLeftButtonDown -= OnSliderDown;
+    }
+
+    private static void OnSliderDown(object sender, MouseButtonEventArgs e)
+    {
+        var s = (Slider)sender;
+        if (s.Template.FindName("PART_Track", s) is not Track track || track.Thumb is not { } thumb) return;
+        if (thumb.IsMouseOver) return;   // за сам бегунок — обычное перетаскивание
+        double v = track.ValueFromPoint(e.GetPosition(track));
+        if (s.IsSnapToTickEnabled && s.TickFrequency > 0)
+            v = s.Minimum + Math.Round((v - s.Minimum) / s.TickFrequency) * s.TickFrequency;
+        s.Value = Math.Clamp(v, s.Minimum, s.Maximum);
+        s.Focus();
+        // бегунок уже под курсором: передаём ему нажатие, и он захватывает мышь
+        track.UpdateLayout();
+        thumb.RaiseEvent(new MouseButtonEventArgs(e.MouseDevice, e.Timestamp, MouseButton.Left)
+        {
+            RoutedEvent = UIElement.MouseLeftButtonDownEvent,
+            Source = thumb,
+        });
+        e.Handled = true;
     }
 
     // ---- оборот с упругим перелётом: меняйте значение (счётчик) ----
