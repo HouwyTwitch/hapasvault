@@ -127,6 +127,20 @@ long pm_net_recv_frame(pm_sock s, uint8_t *buf, size_t cap)
     return (long)len;
 }
 
+int pm_net_set_timeout(pm_sock s, int timeout_ms)
+{
+#ifdef _WIN32
+    DWORD tv = (DWORD)timeout_ms;
+#else
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+#endif
+    if (setsockopt(OSSOCK(s), SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv) != 0) return -1;
+    if (setsockopt(OSSOCK(s), SOL_SOCKET, SO_SNDTIMEO, (const char *)&tv, sizeof tv) != 0) return -1;
+    return 0;
+}
+
 void pm_net_close(pm_sock s)
 {
     if (s != PM_BAD_SOCK) CLOSESOCK(OSSOCK(s));
