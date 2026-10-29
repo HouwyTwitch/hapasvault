@@ -1,18 +1,79 @@
 # hapasvault
 
-HArdware PASswords VAult — аппаратный менеджер паролей на RP2040 (pmtoken).
+HArdware PASswords VAult — аппаратный менеджер паролей на RP2040 (pmtoken)
+и приложение HapasVault для Windows в стиле Material 3 Expressive.
 
 ## Готовая сборка под Windows
 
-GitHub Actions (`.github/workflows/build.yml`) на каждый push собирает проект
-MSVC под Windows x64 (статический CRT, без VC++ Redistributable), гоняет тесты
-и выкладывает `pmtoken_sim.exe`, `pmcli.exe`, `pmtests.exe` в артефакт
-`pmtoken-<commit>-win64` (вкладка Actions → нужный запуск → Artifacts).
-Параллельно на Linux тесты идут под AddressSanitizer/UBSan.
+GitHub Actions (`.github/workflows/build.yml`) на каждый push собирает всё под
+Windows x64, гоняет тесты и выкладывает артефакт `HapasVault-<commit>-win64`
+(вкладка Actions → нужный запуск → Artifacts):
 
-Релиз: `git tag v0.1.0 && git push origin v0.1.0` — архив `pmtoken-v0.1.0-win64.zip`
+```
+HapasVault.exe        приложение (self-contained: .NET и WPF внутри, ставить ничего не нужно)
+pmapi.dll             клиентская библиотека токена (C, статический CRT)
+tools/pmtoken_sim.exe виртуальный токен
+tools/pmcli.exe       консольный клиент
+```
+
+Там же артефакт `screenshots` — все экраны приложения, отрисованные в CI.
+На Linux тесты ядра идут под AddressSanitizer/UBSan, тесты C#-клиента — против
+настоящего симулятора на обеих ОС.
+
+Релиз: `git tag v0.1.0 && git push origin v0.1.0` — архив `HapasVault-v0.1.0-win64.zip`
 появится на странице Releases.
 
+### Попробовать приложение
+
+1. Запустите `tools\pmtoken_sim.exe` (виртуальный токен; flash — файл рядом).
+2. Запустите `HapasVault.exe`: найдёт токен, предложит сопряжение и настройку.
+
+Без токена: кнопка «Демо без токена» или `HapasVault.exe --demo`
+(мастер-пароль в демо — `demo`).
+
+## Приложение HapasVault (`gui/`)
+
+```
+gui/HapasVault.Core/        C#-обёртка над pmapi: TokenClient, ошибки, генератор паролей, BIP39
+gui/HapasVault.Core.Tests/  интеграционные тесты против pmtoken_sim
+gui/HapasVault/             WPF-приложение
+  Theming/   динамический цвет M3: тональные палитры (тон = L*, оттенок — OKLCH),
+             светлая/тёмная тема, акцент Windows, стили палитры
+  Motion/    пружинные и emphasized-кривые
+  Controls/  формы M3 Expressive с морфингом, индикатор загрузки, волнистый прогресс,
+             кнопки с морфингом формы, ripple, поле пароля
+  Themes/    стили контролов, типографика (Roboto), иконки (Material Symbols)
+  Views/     экраны и диалоги (DataTemplate)
+  ViewModels/ логика экранов (CommunityToolkit.Mvvm)
+client/pmapi.c              C ABI для P/Invoke: непрозрачный хэндл, таймаут сокета
+```
+
+Что умеет: поиск токена, сопряжение со сверкой кода, мастер настройки (24 слова,
+проверка трёх, мастер-пароль с оценкой стойкости), восстановление из слов и
+резервной копии, блокировка, хранилище с поиском, фильтрами по категориям и
+группами, генератор паролей, журнал токена, резервная копия, сброс токена.
+
+Безопасность интерфейса:
+* логин и пароль запрашиваются у токена только по действию пользователя и
+  стираются из памяти интерфейса через 30 секунд;
+* скопированный пароль не попадает в журнал буфера Win+V и облачный буфер,
+  буфер очищается через 30 секунд;
+* автоблокировка при бездействии, при блокировке Windows и перед сном;
+* пока хранилище открыто, приложение не опрашивает токен — иначе токен не смог
+  бы закрыться по простою;
+* ключ ПК (`%APPDATA%\HapasVault\pmclient.id`) защищён DPAPI.
+
+Горячие клавиши: Ctrl+N — новая запись, Ctrl+F — поиск, Ctrl+L — заблокировать,
+Esc — закрыть диалог или панель.
+
+Сборка вручную (нужны .NET 8 SDK и сборка CMake в `build/`):
+```
+cmake -S . -B build -A x64 && cmake --build build --config Release
+dotnet test gui/HapasVault.Core.Tests -c Release
+dotnet publish gui/HapasVault/HapasVault.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o publish
+```
+
+## Токен (pmtoken)
 
 Этап 1: ядро токена, виртуальный токен и консольный клиент. Работает без платы.
 
@@ -26,7 +87,7 @@ core/        ядро токена — тот же код уйдёт в прош
   bip39.c      24 слова восстановления
   proto.h      протокол: кадры, команды, статусы
 sim/         виртуальный токен: TCP 127.0.0.1:47123, flash = файл
-client/      библиотека ПК (pmclient) + TCP-транспорт; позже станет DLL для GUI
+client/      библиотека ПК (pmclient) + TCP-транспорт; pmapi — DLL для GUI
 tools/       pmcli — консольный клиент для проверки
 tests/       96 автотестов
 third_party/ Monocypher 4 (X25519, XChaCha20-Poly1305, BLAKE2b, Argon2id)
@@ -135,9 +196,9 @@ K_vault  = KDF(K_token, K_pc || pw_hash)              только в RAM ток
 
 ## Дальше
 
-1. **GUI с радиальным меню** (C#/WPF): глобальный хоткей, оверлей по центру
+1. **Радиальное меню в HapasVault**: глобальный хоткей, оверлей по центру
    экрана, сектора по направлению мыши, вложенные кольца по категориям,
-   автоввод через эмуляцию клавиатуры. Работает с `pmclient` через DLL.
+   автоввод через эмуляцию клавиатуры.
 2. **Прошивка RP2040**: `firmware/hal_rp2040.c` (flash_range_erase/program,
    pico_rand, WS2812 по PIO) + TinyUSB raw HID. Ядро `core/` не меняется.
 3. Счётчик неверных попыток на flash (сейчас в RAM, сбрасывается
