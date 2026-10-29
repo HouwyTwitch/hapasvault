@@ -371,7 +371,7 @@
               <Setter TargetName="Line" Property="Background" Value="{DynamicResource Primary}" />
               <Setter TargetName="Label" Property="Foreground" Value="{DynamicResource Primary}" />
             </Trigger>
-            <DataTrigger Binding="{Binding (c:A.Error), RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource IsNotEmpty}}" Value="True">
+            <DataTrigger Binding="{Binding (c:A.Error), RelativeSource={RelativeSource Self}, Converter={StaticResource IsNotEmpty}}" Value="True">
               <Setter TargetName="Line" Property="Background" Value="{DynamicResource Error}" />
               <Setter TargetName="Line" Property="Height" Value="2" />
               <Setter TargetName="Label" Property="Foreground" Value="{DynamicResource Error}" />
@@ -504,7 +504,7 @@
               <Setter TargetName="Line" Property="Background" Value="{DynamicResource Primary}" />
               <Setter TargetName="Label" Property="Foreground" Value="{DynamicResource Primary}" />
             </Trigger>
-            <DataTrigger Binding="{Binding Error, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource IsNotEmpty}}" Value="True">
+            <DataTrigger Binding="{Binding Error, RelativeSource={RelativeSource Self}, Converter={StaticResource IsNotEmpty}}" Value="True">
               <Setter TargetName="Line" Property="Background" Value="{DynamicResource Error}" />
               <Setter TargetName="Line" Property="Height" Value="2" />
               <Setter TargetName="Label" Property="Foreground" Value="{DynamicResource Error}" />

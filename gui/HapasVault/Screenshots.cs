@@ -173,14 +173,12 @@ internal static class Screenshots
         var bmp = new RenderTargetBitmap(
             (int)Math.Ceiling(root.ActualWidth * dpi.DpiScaleX), (int)Math.Ceiling(root.ActualHeight * dpi.DpiScaleY),
             dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
-        // фон окна (Window.Background) не входит в корневой Grid — рисуем его вручную
-        var dv = new DrawingVisual();
-        using (var dc = dv.RenderOpen())
-        {
+        // фон окна (Window.Background) не входит в корневой Grid — рисуем его отдельно
+        var bg = new DrawingVisual();
+        using (var dc = bg.RenderOpen())
             dc.DrawRectangle(w.Background, null, new Rect(0, 0, root.ActualWidth, root.ActualHeight));
-            dc.DrawRectangle(new VisualBrush(root), null, new Rect(0, 0, root.ActualWidth, root.ActualHeight));
-        }
-        bmp.Render(dv);
+        bmp.Render(bg);
+        bmp.Render(root);
         var enc = new PngBitmapEncoder();
         enc.Frames.Add(BitmapFrame.Create(bmp));
         using var f = File.Create(path);

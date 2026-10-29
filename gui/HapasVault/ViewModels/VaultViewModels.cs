@@ -58,7 +58,6 @@ public sealed partial class EntryViewModel : ObservableObject
     private static readonly (string Fill, string On)[] Tones =
     [
         ("PrimaryContainer", "OnPrimaryContainer"),
-        ("SecondaryContainer", "OnSecondaryContainer"),
         ("TertiaryContainer", "OnTertiaryContainer"),
         ("PrimaryFixed", "OnPrimaryFixed"),
         ("TertiaryFixed", "OnTertiaryFixed"),

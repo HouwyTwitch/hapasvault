@@ -166,7 +166,7 @@
                 <c:Icon Data="{StaticResource Icon.Add}" Width="40" Height="40" Foreground="{DynamicResource OnPrimary}" />
               </c:MorphShape>
               <c:Icon DockPanel.Dock="Bottom" Data="{StaticResource Icon.ArrowForward}" HorizontalAlignment="Right" Width="28" Height="28" />
-              <StackPanel VerticalAlignment="Bottom" Margin="0,0,0,12">
+              <StackPanel VerticalAlignment="Top" Margin="0,28,0,0">
                 <TextBlock Style="{StaticResource Headline.Medium}" FontWeight="SemiBold" Text="Новое хранилище" />
                 <TextBlock Style="{StaticResource Body.Large}" Margin="0,8,0,0" Opacity="0.85"
                            Text="Токен создаст ключи, вы запишете 24 слова и придумаете мастер-пароль." />
@@ -181,7 +181,7 @@
                 <c:Icon Data="{StaticResource Icon.RestartAlt}" Width="40" Height="40" Foreground="{DynamicResource OnTertiaryContainer}" />
               </c:MorphShape>
               <c:Icon DockPanel.Dock="Bottom" Data="{StaticResource Icon.ArrowForward}" HorizontalAlignment="Right" Width="28" Height="28" />
-              <StackPanel VerticalAlignment="Bottom" Margin="0,0,0,12">
+              <StackPanel VerticalAlignment="Top" Margin="0,28,0,0">
                 <TextBlock Style="{StaticResource Headline.Medium}" FontWeight="SemiBold" Text="Восстановить" />
                 <TextBlock Style="{StaticResource Body.Large}" Margin="0,8,0,0" Foreground="{DynamicResource OnSurfaceVariant}"
                            Text="У меня есть 24 слова и, возможно, резервная копия хранилища." />
