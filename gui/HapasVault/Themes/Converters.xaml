@@ -1,0 +1,12 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:local="clr-namespace:HapasVault">
+  <local:IsNotEmptyConverter x:Key="IsNotEmpty" />
+  <local:VisibleWhenConverter x:Key="VisibleWhen" />
+  <local:EqualsConverter x:Key="Equals" />
+  <local:EqualsVisibleConverter x:Key="EqualsVisible" />
+  <local:InverseBoolConverter x:Key="Not" />
+  <local:StrengthBrushConverter x:Key="StrengthBrush" />
+  <local:ResourceConverter x:Key="Resource" />
+  <local:SubtractConverter x:Key="Subtract" />
+</ResourceDictionary>

@@ -1,0 +1,516 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:c="clr-namespace:HapasVault.Controls"
+                    xmlns:vm="clr-namespace:HapasVault.ViewModels">
+  <ResourceDictionary.MergedDictionaries>
+    <ResourceDictionary Source="../Themes/Controls.xaml" />
+  </ResourceDictionary.MergedDictionaries>
+
+  <!-- большая кнопка-карточка (экран «Добро пожаловать») -->
+  <Style x:Key="Button.Card" TargetType="Button">
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Padding" Value="28" />
+    <Setter Property="c:A.PressScale" Value="0.97" />
+    <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing.Rect}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Grid>
+            <Border x:Name="Bg" CornerRadius="36" Background="{TemplateBinding Background}" />
+            <Border x:Name="State" CornerRadius="36" Background="{TemplateBinding Foreground}" Opacity="0" />
+            <c:Ripple CornerRadius="36" />
+            <ContentPresenter Margin="{TemplateBinding Padding}" />
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="State" Property="Opacity" Value="0.08" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ячейка слова при восстановлении -->
+  <Style x:Key="WordBox" TargetType="TextBox">
+    <Setter Property="FontFamily" Value="{StaticResource Font.Mono}" />
+    <Setter Property="FontSize" Value="15" />
+    <Setter Property="Foreground" Value="{DynamicResource OnSurface}" />
+    <Setter Property="CaretBrush" Value="{DynamicResource Primary}" />
+    <Setter Property="SelectionBrush" Value="{DynamicResource Primary}" />
+    <Setter Property="SelectionOpacity" Value="0.3" />
+    <Setter Property="Margin" Value="0,0,8,8" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TextBox">
+          <Border x:Name="Box" Height="48" CornerRadius="14" Background="{DynamicResource SurfaceContainerHighest}"
+                  BorderThickness="2" BorderBrush="Transparent" Cursor="IBeam">
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Left" Width="34" Text="{Binding Number}" TextAlignment="Right" VerticalAlignment="Center"
+                         Margin="0,0,8,0" Style="{StaticResource Label.Large}" Foreground="{DynamicResource OnSurfaceVariant}" />
+              <c:Icon x:Name="Mark" DockPanel.Dock="Right" Width="18" Height="18" Margin="0,0,10,0" Visibility="Collapsed" />
+              <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center" Focusable="False"
+                            HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" />
+            </DockPanel>
+          </Border>
+          <ControlTemplate.Triggers>
+            <DataTrigger Binding="{Binding State}" Value="Ok">
+              <Setter TargetName="Mark" Property="Visibility" Value="Visible" />
+              <Setter TargetName="Mark" Property="Data" Value="{StaticResource Icon.Check}" />
+              <Setter TargetName="Mark" Property="Foreground" Value="{DynamicResource Primary}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding State}" Value="Bad">
+              <Setter TargetName="Mark" Property="Visibility" Value="Visible" />
+              <Setter TargetName="Mark" Property="Data" Value="{StaticResource Icon.Error}" />
+              <Setter TargetName="Mark" Property="Foreground" Value="{DynamicResource Error}" />
+              <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource Error}" />
+            </DataTrigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource Primary}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===================== Токен не найден ===================== -->
+  <DataTemplate DataType="{x:Type vm:ConnectViewModel}">
+    <Grid>
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="480" Margin="24">
+        <Grid Width="176" Height="176">
+          <c:MorphShape Shape="Cookie12" TargetShape="Flower" Fill="{DynamicResource PrimaryContainer}" Spin="10" />
+          <c:LoadingIndicator Width="76" Height="76" Foreground="{DynamicResource Primary}"
+                              Visibility="{Binding Error, Converter={StaticResource VisibleWhen}, ConverterParameter=invert}" />
+          <c:Icon Data="{StaticResource Icon.Usb}" Width="64" Height="64" Foreground="{DynamicResource OnPrimaryContainer}"
+                  Visibility="{Binding Error, Converter={StaticResource VisibleWhen}}" />
+        </Grid>
+        <TextBlock Style="{StaticResource Headline.Emphasized}" TextAlignment="Center" Margin="0,36,0,10" Text="Ищем токен…" />
+        <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}"
+                   Text="{Binding Hint}" Visibility="{Binding Error, Converter={StaticResource VisibleWhen}, ConverterParameter=invert}" />
+        <Border CornerRadius="20" Padding="18,14" Background="{DynamicResource ErrorContainer}" Margin="0,4,0,0"
+                Visibility="{Binding Error, Converter={StaticResource VisibleWhen}}">
+          <DockPanel>
+            <c:Icon Data="{StaticResource Icon.Warning}" Foreground="{DynamicResource OnErrorContainer}" Margin="0,0,12,0" VerticalAlignment="Top" />
+            <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource OnErrorContainer}" Text="{Binding Error}" />
+          </DockPanel>
+        </Border>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,36,0,0">
+          <Button Style="{StaticResource Button.Filled.Large}" Content="Повторить" c:A.Icon="{StaticResource Icon.Refresh}" Command="{Binding RetryCommand}" />
+          <Button Style="{StaticResource Button.Outlined.Large}" Content="Демо без токена" c:A.Icon="{StaticResource Icon.Devices}"
+                  Margin="12,0,0,0" Command="{Binding DemoCommand}" />
+        </StackPanel>
+      </StackPanel>
+    </Grid>
+  </DataTemplate>
+
+  <!-- ===================== Сопряжение ===================== -->
+  <DataTemplate DataType="{x:Type vm:PairViewModel}">
+    <Grid>
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="560" Margin="24">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+          <c:MorphShape Width="120" Height="120" Shape="Square" TargetShape="Cookie4" HoverMorph="True" Fill="{DynamicResource SecondaryContainer}">
+            <c:Icon Data="{StaticResource Icon.Devices}" Width="52" Height="52" Foreground="{DynamicResource OnSecondaryContainer}" />
+          </c:MorphShape>
+          <c:WavyProgress Width="96" VerticalAlignment="Center" Margin="14,0" Value="{Binding Link}" IsIndeterminate="{Binding IsWorking}"
+                          Foreground="{DynamicResource Primary}" Track="{DynamicResource SecondaryContainer}" />
+          <c:MorphShape Width="120" Height="120" Shape="Cookie9" TargetShape="Sunny" IsMorphed="{Binding IsPaired}" Spin="6"
+                        Fill="{DynamicResource PrimaryContainer}">
+            <c:Icon Data="{StaticResource Icon.Usb}" Width="52" Height="52" Foreground="{DynamicResource OnPrimaryContainer}" />
+          </c:MorphShape>
+        </StackPanel>
+
+        <StackPanel Visibility="{Binding IsPaired, Converter={StaticResource VisibleWhen}, ConverterParameter=invert}">
+          <TextBlock Style="{StaticResource Headline.Emphasized}" TextAlignment="Center" Margin="0,40,0,10" Text="Сопряжение с токеном" />
+          <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}"
+                     Text="Компьютер и токен обменяются ключами. Это делается один раз — после этого другой компьютер не сможет работать с вашим токеном." />
+          <Border CornerRadius="20" Padding="18,14" Background="{DynamicResource ErrorContainer}" Margin="0,20,0,0"
+                  Visibility="{Binding Error, Converter={StaticResource VisibleWhen}}">
+            <DockPanel>
+              <c:Icon Data="{StaticResource Icon.Warning}" Foreground="{DynamicResource OnErrorContainer}" Margin="0,0,12,0" />
+              <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource OnErrorContainer}" Text="{Binding Error}" VerticalAlignment="Center" />
+            </DockPanel>
+          </Border>
+          <Button Style="{StaticResource Button.Filled.Large}" Content="Сопрячь" c:A.Icon="{StaticResource Icon.Link}" HorizontalAlignment="Center"
+                  Margin="0,32,0,0" Command="{Binding PairCommand}" IsEnabled="{Binding IsWorking, Converter={StaticResource Not}}" IsDefault="True" />
+        </StackPanel>
+
+        <StackPanel Visibility="{Binding IsPaired, Converter={StaticResource VisibleWhen}}" c:A.Enter="0">
+          <TextBlock Style="{StaticResource Headline.Emphasized}" TextAlignment="Center" Margin="0,40,0,10" Text="Сверьте код" />
+          <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}"
+                     Text="Код должен совпадать с кодом на токене. Если коды разные — отключите токен: кто-то вмешивается в соединение." />
+          <Border CornerRadius="32" Padding="36,18" Margin="0,28,0,0" HorizontalAlignment="Center" Background="{DynamicResource SurfaceContainerHigh}">
+            <TextBlock Text="{Binding Code}" FontFamily="{StaticResource Font.Mono}" FontSize="52" FontWeight="SemiBold" Foreground="{DynamicResource Primary}" />
+          </Border>
+          <Button Style="{StaticResource Button.Filled.Large}" Content="Коды совпадают" c:A.Icon="{StaticResource Icon.Check}"
+                  HorizontalAlignment="Center" Margin="0,32,0,0" Command="{Binding ContinueCommand}" IsDefault="True" />
+        </StackPanel>
+      </StackPanel>
+    </Grid>
+  </DataTemplate>
+
+  <!-- ===================== Добро пожаловать ===================== -->
+  <DataTemplate DataType="{x:Type vm:WelcomeViewModel}">
+    <Grid>
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="24">
+        <TextBlock Style="{StaticResource Display.Emphasized}" TextAlignment="Center" Text="Новый токен" />
+        <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Margin="0,12,0,40" Foreground="{DynamicResource OnSurfaceVariant}"
+                   Text="Токен сопряжён с этим компьютером. Осталось подготовить хранилище." />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+          <Button Style="{StaticResource Button.Card}" Width="340" Height="320" Background="{DynamicResource PrimaryContainer}"
+                  Foreground="{DynamicResource OnPrimaryContainer}" Command="{Binding CreateCommand}" c:A.Enter="0">
+            <DockPanel>
+              <c:MorphShape DockPanel.Dock="Top" Width="88" Height="88" HorizontalAlignment="Left" Shape="Cookie9" TargetShape="Sunny"
+                            HoverMorph="True" Fill="{DynamicResource Primary}">
+                <c:Icon Data="{StaticResource Icon.Add}" Width="40" Height="40" Foreground="{DynamicResource OnPrimary}" />
+              </c:MorphShape>
+              <c:Icon DockPanel.Dock="Bottom" Data="{StaticResource Icon.ArrowForward}" HorizontalAlignment="Right" Width="28" Height="28" />
+              <StackPanel VerticalAlignment="Bottom" Margin="0,0,0,12">
+                <TextBlock Style="{StaticResource Headline.Medium}" FontWeight="SemiBold" Text="Новое хранилище" />
+                <TextBlock Style="{StaticResource Body.Large}" Margin="0,8,0,0" Opacity="0.85"
+                           Text="Токен создаст ключи, вы запишете 24 слова и придумаете мастер-пароль." />
+              </StackPanel>
+            </DockPanel>
+          </Button>
+          <Button Style="{StaticResource Button.Card}" Width="340" Height="320" Margin="20,0,0,0" Background="{DynamicResource SurfaceContainerHigh}"
+                  Foreground="{DynamicResource OnSurface}" Command="{Binding RestoreCommand}" c:A.Enter="90">
+            <DockPanel>
+              <c:MorphShape DockPanel.Dock="Top" Width="88" Height="88" HorizontalAlignment="Left" Shape="Clover4" TargetShape="Cookie6"
+                            HoverMorph="True" Fill="{DynamicResource TertiaryContainer}">
+                <c:Icon Data="{StaticResource Icon.RestartAlt}" Width="40" Height="40" Foreground="{DynamicResource OnTertiaryContainer}" />
+              </c:MorphShape>
+              <c:Icon DockPanel.Dock="Bottom" Data="{StaticResource Icon.ArrowForward}" HorizontalAlignment="Right" Width="28" Height="28" />
+              <StackPanel VerticalAlignment="Bottom" Margin="0,0,0,12">
+                <TextBlock Style="{StaticResource Headline.Medium}" FontWeight="SemiBold" Text="Восстановить" />
+                <TextBlock Style="{StaticResource Body.Large}" Margin="0,8,0,0" Foreground="{DynamicResource OnSurfaceVariant}"
+                           Text="У меня есть 24 слова и, возможно, резервная копия хранилища." />
+              </StackPanel>
+            </DockPanel>
+          </Button>
+        </StackPanel>
+      </StackPanel>
+    </Grid>
+  </DataTemplate>
+
+  <!-- ===================== Мастер настройки ===================== -->
+  <DataTemplate DataType="{x:Type vm:SetupViewModel}">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+      </Grid.RowDefinitions>
+      <!-- индикатор шагов -->
+      <StackPanel Margin="0,8,0,0" HorizontalAlignment="Center" Width="420"
+                  Visibility="{Binding Step, Converter={StaticResource EqualsVisible}, ConverterParameter=Words|Verify|Password|Working}">
+        <UniformGrid Columns="3">
+          <c:WavyProgress Margin="0,0,6,0" IsWavy="False" Value="1"
+                          Foreground="{DynamicResource Primary}" Track="{DynamicResource SecondaryContainer}" Thickness="6" Height="10" />
+          <c:WavyProgress Margin="3,0" IsWavy="False" Foreground="{DynamicResource Primary}" Track="{DynamicResource SecondaryContainer}" Thickness="6" Height="10">
+            <c:WavyProgress.Style>
+              <Style TargetType="c:WavyProgress">
+                <Setter Property="Value" Value="0" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding StepIndex}" Value="2"><Setter Property="Value" Value="1" /></DataTrigger>
+                  <DataTrigger Binding="{Binding StepIndex}" Value="3"><Setter Property="Value" Value="1" /></DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </c:WavyProgress.Style>
+          </c:WavyProgress>
+          <c:WavyProgress Margin="6,0,0,0" IsWavy="False" Foreground="{DynamicResource Primary}" Track="{DynamicResource SecondaryContainer}" Thickness="6" Height="10">
+            <c:WavyProgress.Style>
+              <Style TargetType="c:WavyProgress">
+                <Setter Property="Value" Value="0" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding StepIndex}" Value="3"><Setter Property="Value" Value="1" /></DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </c:WavyProgress.Style>
+          </c:WavyProgress>
+        </UniformGrid>
+        <TextBlock Style="{StaticResource Label.Large}" TextAlignment="Center" Margin="0,10,0,0" Foreground="{DynamicResource OnSurfaceVariant}" Text="{Binding StepTitle}" />
+      </StackPanel>
+
+      <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <c:TransitionPresenter Key="{Binding Step}" Kind="SlideLeft" Content="{Binding}">
+          <c:TransitionPresenter.ContentTemplate>
+            <DataTemplate>
+              <Grid Margin="24" MaxWidth="760" VerticalAlignment="Center">
+                <!-- вступление -->
+                <StackPanel Visibility="{Binding Step, Converter={StaticResource EqualsVisible}, ConverterParameter=Intro}" VerticalAlignment="Center" Margin="0,40,0,0">
+                  <TextBlock Style="{StaticResource Display.Emphasized}" TextAlignment="Center" Text="Новое хранилище" />
+                  <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Margin="0,12,0,36" Foreground="{DynamicResource OnSurfaceVariant}"
+                             Text="Три коротких шага. Пароли будут храниться и расшифровываться только на токене." />
+                  <UniformGrid Columns="3" Width="720">
+                    <Border Style="{StaticResource Card}" Margin="0,0,8,0" c:A.Enter="0">
+                      <StackPanel>
+                        <c:MorphShape Width="56" Height="56" HorizontalAlignment="Left" Shape="Cookie7" Fill="{DynamicResource PrimaryContainer}" HoverMorph="True" TargetShape="Sunny">
+                          <c:Icon Data="{StaticResource Icon.KeyVertical}" Foreground="{DynamicResource OnPrimaryContainer}" />
+                        </c:MorphShape>
+                        <TextBlock Style="{StaticResource Title.Medium}" Margin="0,16,0,6" Text="24 слова" />
+                        <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource OnSurfaceVariant}"
+                                   Text="Фраза восстановления. Запишите её на бумагу — это единственный способ вернуть доступ." />
+                      </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Card}" Margin="4,0" c:A.Enter="70">
+                      <StackPanel>
+                        <c:MorphShape Width="56" Height="56" HorizontalAlignment="Left" Shape="Clover4" Fill="{DynamicResource SecondaryContainer}" HoverMorph="True" TargetShape="Cookie4">
+                          <c:Icon Data="{StaticResource Icon.DoneAll}" Foreground="{DynamicResource OnSecondaryContainer}" />
+                        </c:MorphShape>
+                        <TextBlock Style="{StaticResource Title.Medium}" Margin="0,16,0,6" Text="Проверка" />
+                        <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource OnSurfaceVariant}"
+                                   Text="Введёте три слова из фразы, чтобы убедиться, что она записана верно." />
+                      </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Card}" Margin="8,0,0,0" c:A.Enter="140">
+                      <StackPanel>
+                        <c:MorphShape Width="56" Height="56" HorizontalAlignment="Left" Shape="Pentagon" Fill="{DynamicResource TertiaryContainer}" HoverMorph="True" TargetShape="Flower">
+                          <c:Icon Data="{StaticResource Icon.Password}" Foreground="{DynamicResource OnTertiaryContainer}" />
+                        </c:MorphShape>
+                        <TextBlock Style="{StaticResource Title.Medium}" Margin="0,16,0,6" Text="Мастер-пароль" />
+                        <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource OnSurfaceVariant}"
+                                   Text="Нужен каждый раз, чтобы открыть хранилище. Без токена он бесполезен." />
+                      </StackPanel>
+                    </Border>
+                  </UniformGrid>
+                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,40,0,0">
+                    <Button Style="{StaticResource Button.Text}" MinHeight="56" Content="Назад" Command="{Binding CancelCommand}" />
+                    <Button Style="{StaticResource Button.Filled.Large}" Margin="12,0,0,0" Content="Начать" c:A.Icon="{StaticResource Icon.ArrowForward}"
+                            Command="{Binding BeginCommand}" IsDefault="True" IsEnabled="{Binding IsBusy, Converter={StaticResource Not}}" />
+                  </StackPanel>
+                </StackPanel>
+
+                <!-- слова -->
+                <StackPanel Visibility="{Binding Step, Converter={StaticResource EqualsVisible}, ConverterParameter=Words}">
+                  <DockPanel>
+                    <ToggleButton DockPanel.Dock="Right" Style="{StaticResource IconToggle}" IsChecked="{Binding WordsHidden}"
+                                  c:A.Icon="{StaticResource Icon.VisibilityOff}" ToolTip="Скрыть слова" VerticalAlignment="Center" />
+                    <TextBlock Style="{StaticResource Headline.Emphasized}" Text="Запишите эти слова" />
+                  </DockPanel>
+                  <Border CornerRadius="20" Padding="18,14" Margin="0,16,0,20" Background="{DynamicResource TertiaryContainer}">
+                    <DockPanel>
+                      <c:Icon Data="{StaticResource Icon.Warning}" Foreground="{DynamicResource OnTertiaryContainer}" Margin="0,0,12,0" VerticalAlignment="Top" />
+                      <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource OnTertiaryContainer}"
+                                 Text="На бумагу и по порядку. Не фотографируйте и не храните в файле: кто знает фразу, тот может восстановить хранилище на своём токене." />
+                    </DockPanel>
+                  </Border>
+                  <ItemsControl ItemsSource="{Binding Words}">
+                    <ItemsControl.Style>
+                      <Style TargetType="ItemsControl">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding WordsHidden}" Value="True">
+                            <Setter Property="Effect">
+                              <Setter.Value>
+                                <BlurEffect Radius="18" />
+                              </Setter.Value>
+                            </Setter>
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </ItemsControl.Style>
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <UniformGrid Columns="4" />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Border Height="56" CornerRadius="18" Margin="0,0,8,8" Background="{DynamicResource SurfaceContainerHigh}">
+                          <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" Width="40" TextAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0"
+                                       Style="{StaticResource Label.Large}" Foreground="{DynamicResource OnSurfaceVariant}" Text="{Binding Number}" />
+                            <TextBlock VerticalAlignment="Center" FontFamily="{StaticResource Font.Mono}" FontSize="17" FontWeight="Medium" Text="{Binding Word}" />
+                          </DockPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+                    <Button Style="{StaticResource Button.Text}" MinHeight="56" Content="Отмена" Command="{Binding CancelCommand}" />
+                    <Button Style="{StaticResource Button.Filled.Large}" Margin="12,0,0,0" Content="Слова записаны" c:A.Icon="{StaticResource Icon.Check}"
+                            Command="{Binding WordsWrittenCommand}" />
+                  </StackPanel>
+                </StackPanel>
+
+                <!-- проверка -->
+                <StackPanel Visibility="{Binding Step, Converter={StaticResource EqualsVisible}, ConverterParameter=Verify}" MaxWidth="520" Margin="0,40,0,0">
+                  <c:MorphShape Width="96" Height="96" Shape="Clover4" TargetShape="Cookie9" HoverMorph="True" Fill="{DynamicResource SecondaryContainer}">
+                    <c:Icon Data="{StaticResource Icon.DoneAll}" Width="44" Height="44" Foreground="{DynamicResource OnSecondaryContainer}" />
+                  </c:MorphShape>
+                  <TextBlock Style="{StaticResource Headline.Emphasized}" TextAlignment="Center" Margin="0,24,0,8" Text="Проверим запись" />
+                  <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}" Margin="0,0,0,24"
+                             Text="Введите слова с указанными номерами — по своей бумажке, не подглядывая." />
+                  <ItemsControl ItemsSource="{Binding Verify}" c:A.Shake="{Binding Shake}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <TextBox Style="{StaticResource TextField.Mono}" Margin="0,0,0,12" c:A.Label="{Binding Label}" c:A.Error="{Binding Error}"
+                                 Text="{Binding Input, UpdateSourceTrigger=PropertyChanged}" />
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                    <Button Style="{StaticResource Button.Text}" MinHeight="56" Content="Показать слова" Command="{Binding BackToWordsCommand}" />
+                    <Button Style="{StaticResource Button.Filled.Large}" Margin="12,0,0,0" Content="Проверить" c:A.Icon="{StaticResource Icon.Check}"
+                            Command="{Binding CheckWordsCommand}" IsDefault="True" />
+                  </StackPanel>
+                </StackPanel>
+
+                <!-- мастер-пароль -->
+                <StackPanel Visibility="{Binding Step, Converter={StaticResource EqualsVisible}, ConverterParameter=Password}" MaxWidth="520" Margin="0,40,0,0">
+                  <c:MorphShape Width="96" Height="96" Shape="Pentagon" TargetShape="Flower" HoverMorph="True" Fill="{DynamicResource TertiaryContainer}">
+                    <c:Icon Data="{StaticResource Icon.Password}" Width="44" Height="44" Foreground="{DynamicResource OnTertiaryContainer}" />
+                  </c:MorphShape>
+                  <TextBlock Style="{StaticResource Headline.Emphasized}" TextAlignment="Center" Margin="0,24,0,8" Text="Мастер-пароль" />
+                  <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}" Margin="0,0,0,24"
+                             Text="Он открывает хранилище. Забытый пароль можно заменить только восстановлением из 24 слов." />
+                  <StackPanel c:A.Shake="{Binding Shake}">
+                    <c:PasswordField Label="Мастер-пароль" Password="{Binding Password}" Error="{Binding PasswordError}" c:A.FocusOnLoad="True" />
+                    <c:WavyProgress Margin="4,12,4,0" Value="{Binding StrengthValue}" Foreground="{Binding Strength, Converter={StaticResource StrengthBrush}}"
+                                    Track="{DynamicResource SurfaceContainerHighest}" />
+                    <TextBlock Style="{StaticResource Body.Small}" Margin="16,4,0,16" Foreground="{DynamicResource OnSurfaceVariant}" Text="{Binding StrengthText}" />
+                    <c:PasswordField Label="Ещё раз" Password="{Binding Confirm}" Error="{Binding ConfirmError}" />
+                  </StackPanel>
+                  <Button Style="{StaticResource Button.Filled.Large}" HorizontalAlignment="Right" Margin="0,24,0,0" Content="Создать хранилище"
+                          c:A.Icon="{StaticResource Icon.Encrypted}" Command="{Binding CreateCommand}" IsDefault="True" />
+                </StackPanel>
+
+                <!-- вычисление ключа -->
+                <StackPanel Visibility="{Binding Step, Converter={StaticResource EqualsVisible}, ConverterParameter=Working}" VerticalAlignment="Center" Margin="0,80,0,0">
+                  <c:LoadingIndicator Width="96" Height="96" Foreground="{DynamicResource Primary}" Container="{DynamicResource PrimaryContainer}" />
+                  <TextBlock Style="{StaticResource Headline.Small}" TextAlignment="Center" Margin="0,28,0,8" Text="Создаём хранилище…" />
+                  <TextBlock Style="{StaticResource Body.Medium}" TextAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}"
+                             Text="Argon2id, 64 МиБ памяти: подбор мастер-пароля становится очень дорогим." />
+                </StackPanel>
+
+                <!-- готово -->
+                <StackPanel Visibility="{Binding Step, Converter={StaticResource EqualsVisible}, ConverterParameter=Done}" VerticalAlignment="Center" Margin="0,60,0,0">
+                  <c:MorphShape Width="168" Height="168" Shape="SoftBurst" TargetShape="Sunny" Spin="14" Fill="{DynamicResource Primary}">
+                    <c:Icon Data="{StaticResource Icon.Check}" Width="72" Height="72" Foreground="{DynamicResource OnPrimary}" />
+                  </c:MorphShape>
+                  <TextBlock Style="{StaticResource Display.Emphasized}" TextAlignment="Center" Margin="0,32,0,8" Text="Готово!" />
+                  <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}"
+                             Text="Хранилище создано и открыто. Храните бумагу со словами отдельно от токена." />
+                  <Button Style="{StaticResource Button.Filled.Large}" HorizontalAlignment="Center" Margin="0,32,0,0" Content="Открыть хранилище"
+                          c:A.Icon="{StaticResource Icon.ArrowForward}" Command="{Binding FinishCommand}" IsDefault="True" />
+                </StackPanel>
+              </Grid>
+            </DataTemplate>
+          </c:TransitionPresenter.ContentTemplate>
+        </c:TransitionPresenter>
+      </ScrollViewer>
+    </Grid>
+  </DataTemplate>
+
+  <!-- ===================== Восстановление ===================== -->
+  <DataTemplate DataType="{x:Type vm:RestoreViewModel}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+      <StackPanel Margin="32,16,32,32" MaxWidth="820">
+        <TextBlock Style="{StaticResource Display.Emphasized}" Text="Восстановление" />
+        <TextBlock Style="{StaticResource Body.Large}" Margin="0,8,0,24" Foreground="{DynamicResource OnSurfaceVariant}"
+                   Text="Введите 24 слова по порядку. Достаточно первых четырёх букв каждого слова." />
+
+        <ItemsControl ItemsSource="{Binding Words}" c:A.Shake="{Binding Shake}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <UniformGrid Columns="4" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <TextBox Style="{StaticResource WordBox}" Text="{Binding Text, UpdateSourceTrigger=PropertyChanged}" />
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <DockPanel Margin="4,8,0,0">
+          <c:Icon DockPanel.Dock="Left" Width="20" Height="20" Margin="0,0,8,0">
+            <c:Icon.Style>
+              <Style TargetType="c:Icon">
+                <Setter Property="Data" Value="{StaticResource Icon.Info}" />
+                <Setter Property="Foreground" Value="{DynamicResource OnSurfaceVariant}" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding PhraseOk}" Value="True">
+                    <Setter Property="Data" Value="{StaticResource Icon.CheckCircle}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Primary}" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </c:Icon.Style>
+          </c:Icon>
+          <TextBlock Style="{StaticResource Body.Medium}" VerticalAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}" Text="{Binding PhraseStatus}" />
+        </DockPanel>
+
+        <Border Style="{StaticResource Card}" Margin="0,24,0,0">
+          <DockPanel>
+            <c:MorphShape DockPanel.Dock="Left" Width="56" Height="56" Shape="Cookie6" Fill="{DynamicResource SecondaryContainer}" Margin="0,0,16,0" VerticalAlignment="Top">
+              <c:Icon Data="{StaticResource Icon.UploadFile}" Foreground="{DynamicResource OnSecondaryContainer}" />
+            </c:MorphShape>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+              <Button Style="{StaticResource Button.Text}" Content="Убрать" Command="{Binding ClearBackupCommand}"
+                      Visibility="{Binding BackupName, Converter={StaticResource VisibleWhen}}" />
+              <Button Style="{StaticResource Button.Tonal}" Content="Выбрать файл…" Margin="8,0,0,0" Command="{Binding PickBackupCommand}" />
+            </StackPanel>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock Style="{StaticResource Title.Medium}" Text="Резервная копия (необязательно)" />
+              <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource OnSurfaceVariant}" Margin="0,4,16,0"
+                         Text="Без копии восстановится доступ, но хранилище будет пустым."
+                         Visibility="{Binding BackupName, Converter={StaticResource VisibleWhen}, ConverterParameter=invert}" />
+              <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource Primary}" Margin="0,4,16,0" Text="{Binding BackupName}"
+                         Visibility="{Binding BackupName, Converter={StaticResource VisibleWhen}}" />
+            </StackPanel>
+          </DockPanel>
+        </Border>
+
+        <TextBlock Style="{StaticResource Title.Large}" Margin="0,32,0,4" Text="Новый мастер-пароль" />
+        <TextBlock Style="{StaticResource Body.Medium}" Margin="0,0,0,16" Foreground="{DynamicResource OnSurfaceVariant}"
+                   Text="Можно взять прежний или придумать новый — он заменит старый." />
+        <UniformGrid Columns="2">
+          <StackPanel Margin="0,0,8,0">
+            <c:PasswordField Label="Мастер-пароль" Password="{Binding Password}" Error="{Binding PasswordError}" />
+            <c:WavyProgress Margin="4,12,4,0" Value="{Binding StrengthValue}" Foreground="{Binding Strength, Converter={StaticResource StrengthBrush}}"
+                            Track="{DynamicResource SurfaceContainerHighest}" />
+            <TextBlock Style="{StaticResource Body.Small}" Margin="16,4,0,0" Foreground="{DynamicResource OnSurfaceVariant}" Text="{Binding StrengthText}" />
+          </StackPanel>
+          <c:PasswordField Margin="8,0,0,0" VerticalAlignment="Top" Label="Ещё раз" Password="{Binding Confirm}" Error="{Binding ConfirmError}" />
+        </UniformGrid>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,32,0,0">
+          <c:LoadingIndicator Width="40" Height="40" Margin="0,0,16,0" Foreground="{DynamicResource Primary}"
+                              Visibility="{Binding IsWorking, Converter={StaticResource VisibleWhen}}" />
+          <Button Style="{StaticResource Button.Text}" MinHeight="56" Content="Отмена" Command="{Binding CancelCommand}" />
+          <Button Style="{StaticResource Button.Filled.Large}" Margin="12,0,0,0" Content="Восстановить" c:A.Icon="{StaticResource Icon.RestartAlt}"
+                  Command="{Binding RestoreCommand}" IsEnabled="{Binding IsWorking, Converter={StaticResource Not}}" />
+        </StackPanel>
+      </StackPanel>
+    </ScrollViewer>
+  </DataTemplate>
+
+  <!-- ===================== Хранилище заблокировано ===================== -->
+  <DataTemplate DataType="{x:Type vm:LockViewModel}">
+    <Grid>
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Width="420" Margin="24">
+        <c:MorphShape Width="156" Height="156" Shape="Cookie9" TargetShape="Sunny" Spin="8" IsMorphed="{Binding IsWorking}" Fill="{DynamicResource PrimaryContainer}">
+          <c:Icon Data="{StaticResource Icon.LockFill}" Width="60" Height="60" Foreground="{DynamicResource OnPrimaryContainer}" />
+        </c:MorphShape>
+        <TextBlock Style="{StaticResource Display.Small}" FontWeight="SemiBold" TextAlignment="Center" Margin="0,32,0,8" Text="Хранилище закрыто" />
+        <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}" Text="{Binding Subtitle}" />
+
+        <StackPanel Margin="0,32,0,0" Visibility="{Binding HasKey, Converter={StaticResource VisibleWhen}}">
+          <c:PasswordField Label="Мастер-пароль" Password="{Binding Password}" Error="{Binding Error}" c:A.FocusOnLoad="True" c:A.Shake="{Binding Shake}" />
+          <Button Style="{StaticResource Button.Filled.Large}" Margin="0,20,0,0" HorizontalAlignment="Stretch" Content="Открыть"
+                  c:A.Icon="{StaticResource Icon.LockOpen}" Command="{Binding UnlockCommand}" IsDefault="True" />
+          <c:WavyProgress Margin="8,16,8,0" IsIndeterminate="True" Foreground="{DynamicResource Primary}" Track="{DynamicResource SecondaryContainer}"
+                          Visibility="{Binding IsWorking, Converter={StaticResource VisibleWhen}}" />
+        </StackPanel>
+
+        <Border CornerRadius="20" Padding="18,14" Margin="0,32,0,0" Background="{DynamicResource ErrorContainer}"
+                Visibility="{Binding HasKey, Converter={StaticResource VisibleWhen}, ConverterParameter=invert}">
+          <DockPanel>
+            <c:Icon Data="{StaticResource Icon.Warning}" Foreground="{DynamicResource OnErrorContainer}" Margin="0,0,12,0" VerticalAlignment="Top" />
+            <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource OnErrorContainer}"
+                       Text="На этом компьютере нет второй половины ключа: файл ключа ПК утерян или создан заново. Откройте хранилище на компьютере, где его настраивали, или сбросьте токен кнопкой на устройстве и восстановите из 24 слов." />
+          </DockPanel>
+        </Border>
+      </StackPanel>
+    </Grid>
+  </DataTemplate>
+</ResourceDictionary>

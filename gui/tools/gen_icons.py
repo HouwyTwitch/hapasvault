@@ -15,7 +15,7 @@ shield_lock-fill usb link check check_circle close error warning refresh downloa
 upload dark_mode light_mode contrast palette folder person password casino edit
 arrow_back arrow_forward remove crop_square filter_none info logout fingerprint
 encrypted tune devices sync lock_reset restart_alt cable key_vertical shield
-done_all category account_circle save upload_file keyboard grid_view
+done_all category account_circle save upload_file keyboard grid_view key_vertical-fill
 """.split()
 
 TOKEN = re.compile(r"[A-Za-z]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")

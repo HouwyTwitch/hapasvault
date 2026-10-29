@@ -12,51 +12,116 @@ permissions:
 
 jobs:
   linux:
-    name: Linux (GCC + ASan/UBSan)
+    name: Linux (GCC + ASan/UBSan, .NET)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Configure
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Configure (sanitizers)
         run: >
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+          cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
-      - name: Build
-        run: cmake --build build -j
-      - name: Test
-        run: ctest --test-dir build --output-on-failure
+      - name: Build (sanitizers)
+        run: cmake --build build-asan -j
+      - name: Test C core
+        run: ctest --test-dir build-asan --output-on-failure
+
+      # pmapi.so для .NET собираем без санитайзеров (ASan нельзя подгрузить в dotnet)
+      - name: Build native for .NET
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+      - name: Test C# core against simulator
+        run: dotnet test gui/HapasVault.Core.Tests -c Release --logger "console;verbosity=normal"
 
   windows:
-    name: Windows x64 (MSVC)
+    name: Windows x64 (MSVC + WPF)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
 
       - name: Configure
-        # статический CRT (/MT): exe запускаются без VC++ Redistributable
+        # статический CRT (/MT): exe и dll запускаются без VC++ Redistributable
         run: >
           cmake -S . -B build -A x64
           -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
           -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
-
-      - name: Build
+      - name: Build native
         run: cmake --build build --config Release --parallel
-
-      - name: Test
+      - name: Test C core
         run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Test C# core against simulator
+        run: dotnet test gui/HapasVault.Core.Tests -c Release --logger "console;verbosity=normal"
+
+      - name: Publish GUI
+        run: >
+          dotnet publish gui/HapasVault/HapasVault.csproj -c Release -r win-x64 --self-contained
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true -p:DebugType=none -o publish
+
+      - name: Render all screens
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath publish/HapasVault.exe -ArgumentList '--screenshots', "$PWD/screenshots" `
+               -PassThru -RedirectStandardOutput screenshots.log -RedirectStandardError screenshots.err
+          if (-not $p.WaitForExit(300000)) { $p.Kill(); throw "screenshots: timeout" }
+          Get-Content screenshots.log, screenshots.err -ErrorAction SilentlyContinue
+          if (Test-Path screenshots/errors.txt) { Get-Content screenshots/errors.txt }
+          $crash = Join-Path $env:APPDATA 'HapasVault/crash.log'
+          if (Test-Path $crash) { Get-Content $crash }
+          if ($p.ExitCode -ne 0) { throw "screenshots: exit code $($p.ExitCode)" }
+
+      - name: Screenshot thumbnails (temporary, for log review)
+        if: always()
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object MimeType -eq 'image/jpeg'
+          $ep = New-Object System.Drawing.Imaging.EncoderParameters 1
+          $ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality), 70L
+          foreach ($f in Get-ChildItem screenshots/*.png -ErrorAction SilentlyContinue) {
+            $img = [System.Drawing.Image]::FromFile($f.FullName)
+            $w = 900; $h = [int]($img.Height * $w / $img.Width)
+            $bmp = New-Object System.Drawing.Bitmap $w, $h
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.InterpolationMode = 'HighQualityBicubic'
+            $g.DrawImage($img, 0, 0, $w, $h)
+            $ms = New-Object System.IO.MemoryStream
+            $bmp.Save($ms, $codec, $ep)
+            "===IMG $($f.BaseName)==="
+            [Convert]::ToBase64String($ms.ToArray()) -split '(.{3000})' | Where-Object { $_ }
+            "===END==="
+          }
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: ignore
 
       - name: Package
         shell: pwsh
         run: |
-          $name = if ("${{ github.ref_type }}" -eq "tag") { "pmtoken-${{ github.ref_name }}-win64" } else { "pmtoken-$("${{ github.sha }}".Substring(0,7))-win64" }
+          $ver = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "$("${{ github.sha }}".Substring(0,7))" }
+          $name = "HapasVault-$ver-win64"
           $dir = "dist/$name"
-          New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          Copy-Item build/Release/pmtoken_sim.exe, build/Release/pmcli.exe, build/Release/pmtests.exe $dir
+          New-Item -ItemType Directory -Force -Path $dir, "$dir/tools" | Out-Null
+          Copy-Item publish/HapasVault.exe, publish/pmapi.dll $dir
+          Copy-Item build/Release/pmtoken_sim.exe, build/Release/pmcli.exe "$dir/tools"
           Copy-Item README.md $dir
           Copy-Item third_party/monocypher/LICENCE.md "$dir/LICENCE-monocypher.md"
+          Copy-Item gui/THIRD_PARTY.md $dir
           Compress-Archive -Path "$dir/*" -DestinationPath "dist/$name.zip"
           "PKG_NAME=$name" >> $env:GITHUB_ENV
 
-      - name: Upload artifact
+      - name: Upload build
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PKG_NAME }}

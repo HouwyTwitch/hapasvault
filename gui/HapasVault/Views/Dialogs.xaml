@@ -1,0 +1,125 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:c="clr-namespace:HapasVault.Controls"
+                    xmlns:vm="clr-namespace:HapasVault.ViewModels">
+  <ResourceDictionary.MergedDictionaries>
+    <ResourceDictionary Source="../Themes/Controls.xaml" />
+  </ResourceDictionary.MergedDictionaries>
+
+  <!-- ===================== подтверждение ===================== -->
+  <DataTemplate DataType="{x:Type vm:ConfirmDialogViewModel}">
+    <StackPanel Width="420">
+      <c:MorphShape Width="64" Height="64" Shape="Cookie9" TargetShape="Sunny" HoverMorph="True">
+        <c:MorphShape.Style>
+          <Style TargetType="c:MorphShape">
+            <Setter Property="Fill" Value="{DynamicResource SecondaryContainer}" />
+            <Setter Property="TextElement.Foreground" Value="{DynamicResource OnSecondaryContainer}" />
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding IsDanger}" Value="True">
+                <Setter Property="Fill" Value="{DynamicResource ErrorContainer}" />
+                <Setter Property="TextElement.Foreground" Value="{DynamicResource OnErrorContainer}" />
+                <Setter Property="Shape" Value="SoftBurst" />
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </c:MorphShape.Style>
+        <c:Icon Data="{Binding IconKey, Converter={StaticResource Resource}}" Width="28" Height="28" />
+      </c:MorphShape>
+      <TextBlock Style="{StaticResource Headline.Small}" TextAlignment="Center" Margin="0,16,0,0" Text="{Binding Title}" />
+      <TextBlock Style="{StaticResource Body.Medium}" Margin="0,16,0,0" Foreground="{DynamicResource OnSurfaceVariant}" Text="{Binding Message}" />
+      <TextBox Style="{StaticResource TextField}" Margin="0,20,0,0" c:A.Label="Подтверждение" c:A.FocusOnLoad="True"
+               Text="{Binding Typed, UpdateSourceTrigger=PropertyChanged}"
+               Visibility="{Binding TypeToConfirm, Converter={StaticResource VisibleWhen}}" />
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,28,0,0">
+        <Button Style="{StaticResource Button.Text}" Content="Отмена" Command="{Binding CancelCommand}" IsCancel="True" />
+        <Button Margin="8,0,0,0" Content="{Binding ConfirmText}" Command="{Binding ConfirmCommand}" IsDefault="True">
+          <Button.Style>
+            <Style TargetType="Button" BasedOn="{StaticResource Button.Filled}">
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding IsDanger}" Value="True">
+                  <Setter Property="Background" Value="{DynamicResource Error}" />
+                  <Setter Property="Foreground" Value="{DynamicResource OnError}" />
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </Button.Style>
+        </Button>
+      </StackPanel>
+    </StackPanel>
+  </DataTemplate>
+
+  <!-- ===================== редактор записи ===================== -->
+  <DataTemplate DataType="{x:Type vm:EditorDialogViewModel}">
+    <StackPanel Width="520" c:A.Shake="{Binding Shake}">
+      <DockPanel>
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" c:A.Icon="{StaticResource Icon.Close}" Command="{Binding CancelCommand}"
+                ToolTip="Закрыть (Esc)" />
+        <TextBlock Style="{StaticResource Headline.Small}" VerticalAlignment="Center" Text="{Binding Title}" />
+      </DockPanel>
+
+      <TextBox Style="{StaticResource TextField}" Margin="0,20,0,0" c:A.Label="Название" c:A.Error="{Binding NameError}" c:A.FocusOnLoad="True"
+               Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+      <TextBox Style="{StaticResource TextField}" Margin="0,12,0,0" c:A.Label="Категория" c:A.Icon="{StaticResource Icon.Folder}"
+               Text="{Binding Category, UpdateSourceTrigger=PropertyChanged}" />
+      <ItemsControl ItemsSource="{Binding KnownCategories}" Margin="4,8,0,0" Focusable="False"
+                    Visibility="{Binding KnownCategories, Converter={StaticResource VisibleWhen}}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Button Style="{StaticResource Button.Outlined}" MinHeight="32" Height="32" Padding="12,0" Margin="0,0,6,6" FontSize="13" Content="{Binding}"
+                    Command="{Binding DataContext.PickCategoryCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+      <TextBox Style="{StaticResource TextField}" Margin="0,12,0,0" c:A.Label="Логин" c:A.Icon="{StaticResource Icon.Person}"
+               Text="{Binding Login, UpdateSourceTrigger=PropertyChanged}" />
+
+      <DockPanel Margin="0,12,0,0">
+        <ToggleButton DockPanel.Dock="Right" Style="{StaticResource IconToggle}" Width="56" Height="56" Margin="8,0,0,0" VerticalAlignment="Top"
+                      IsChecked="{Binding IsGeneratorOpen}" c:A.Icon="{StaticResource Icon.Casino}" ToolTip="Генератор паролей" />
+        <c:PasswordField Label="Пароль" Password="{Binding Password}" IsRevealed="{Binding IsRevealed}" />
+      </DockPanel>
+      <c:WavyProgress Margin="4,12,72,0" Value="{Binding StrengthValue}" Foreground="{Binding Strength, Converter={StaticResource StrengthBrush}}"
+                      Track="{DynamicResource SurfaceContainerHighest}" Visibility="{Binding Password, Converter={StaticResource VisibleWhen}}" />
+      <TextBlock Style="{StaticResource Body.Small}" Margin="16,4,0,0" Foreground="{DynamicResource OnSurfaceVariant}" Text="{Binding StrengthText}"
+                 Visibility="{Binding Password, Converter={StaticResource VisibleWhen}}" />
+
+      <!-- генератор -->
+      <Border CornerRadius="24" Padding="20,12,12,16" Margin="0,12,0,0" Background="{DynamicResource SurfaceContainerHigh}"
+              Visibility="{Binding IsGeneratorOpen, Converter={StaticResource VisibleWhen}}" c:A.Enter="0">
+        <StackPanel>
+          <DockPanel>
+            <Button DockPanel.Dock="Right" Style="{StaticResource IconButton.Filled}" Width="48" Height="48" c:A.Icon="{StaticResource Icon.Casino}"
+                    c:A.Spin="{Binding Spin}" Command="{Binding GenerateCommand}" ToolTip="Ещё вариант" />
+            <TextBlock Style="{StaticResource Title.Small}" VerticalAlignment="Center">
+              <Run Text="Длина " /><Run Text="{Binding Length, Mode=OneWay, StringFormat=0}" FontFamily="{StaticResource Font.Mono}" Foreground="{DynamicResource Primary}" />
+            </TextBlock>
+          </DockPanel>
+          <Slider Minimum="8" Maximum="64" Value="{Binding Length}" IsSnapToTickEnabled="True" TickFrequency="1" Margin="0,4,0,8" />
+          <WrapPanel>
+            <ToggleButton Style="{StaticResource Chip}" Margin="0,0,8,0" Content="a–z" IsChecked="{Binding Lower}" />
+            <ToggleButton Style="{StaticResource Chip}" Margin="0,0,8,0" Content="A–Z" IsChecked="{Binding Upper}" />
+            <ToggleButton Style="{StaticResource Chip}" Margin="0,0,8,0" Content="0–9" IsChecked="{Binding Digits}" />
+            <ToggleButton Style="{StaticResource Chip}" Content="!#$%" IsChecked="{Binding Symbols}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+
+      <TextBlock Style="{StaticResource Body.Medium}" Margin="4,12,0,0" Foreground="{DynamicResource Error}" Text="{Binding Error}"
+                 Visibility="{Binding Error, Converter={StaticResource VisibleWhen}}" />
+      <DockPanel Margin="0,24,0,0">
+        <c:LoadingIndicator DockPanel.Dock="Left" Width="40" Height="40" Foreground="{DynamicResource Primary}"
+                            Visibility="{Binding IsSaving, Converter={StaticResource VisibleWhen}}" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+          <Button Style="{StaticResource Button.Text}" Content="Отмена" Command="{Binding CancelCommand}" IsCancel="True" />
+          <Button Style="{StaticResource Button.Filled}" Margin="8,0,0,0" Content="Сохранить" c:A.Icon="{StaticResource Icon.Save}"
+                  Command="{Binding SaveCommand}" IsDefault="True" IsEnabled="{Binding IsSaving, Converter={StaticResource Not}}" />
+        </StackPanel>
+      </DockPanel>
+    </StackPanel>
+  </DataTemplate>
+</ResourceDictionary>

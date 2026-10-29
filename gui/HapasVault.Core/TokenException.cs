@@ -69,6 +69,9 @@ public sealed class TokenException : Exception
         return new TokenException(code, e, Describe(e, code));
     }
 
+    /// <summary>Текст для статуса токена (ST_*), например из журнала.</summary>
+    public static string DescribeStatus(int status) => status == 0 ? "Успешно" : FromCode(status).Message;
+
     public static string Describe(TokenError e, int code = 0) => e switch
     {
         TokenError.Disconnected => "Нет связи с токеном. Проверьте подключение.",

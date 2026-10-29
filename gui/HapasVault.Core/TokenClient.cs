@@ -20,7 +20,7 @@ public sealed record LogRecord(uint UptimeSeconds, byte Command, byte Status, ui
 /// Асинхронная обёртка над pmapi. Вызовы выполняются по одному в пуле потоков:
 /// Argon2id (64 МиБ) и сеть не блокируют UI.
 /// </summary>
-public sealed unsafe partial class TokenClient : IDisposable
+public sealed unsafe partial class TokenClient : ITokenClient
 {
     public const ushort DefaultPort = 47123;
     public const int MaxField = 255;      // PM_MAX_STR, байт UTF-8
