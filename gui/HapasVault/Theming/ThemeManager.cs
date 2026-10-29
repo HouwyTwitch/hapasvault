@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using HapasVault.Motion;
@@ -30,15 +31,20 @@ public sealed class ThemeManager
     ];
 
     private readonly ResourceDictionary _res;
-    private readonly Dictionary<string, SolidColorBrush> _brushes = new();
+    private readonly Dictionary<string, ColorSource> _sources = new();
 
     public ThemeManager(ResourceDictionary resources)
     {
         _res = resources;
         foreach (var role in Roles.All)
         {
-            var b = new SolidColorBrush(Colors.Transparent);
-            _brushes[role] = b;
+            // Кисти в ресурсах приложения WPF замораживает, и анимировать их нельзя.
+            // Привязанная кисть заморозке не поддаётся, а анимируется её источник.
+            var src = new ColorSource();
+            var b = new SolidColorBrush();
+            BindingOperations.SetBinding(b, SolidColorBrush.ColorProperty,
+                new Binding(nameof(ColorSource.Color)) { Source = src });
+            _sources[role] = src;
             _res[role] = b;
         }
         SystemEvents.UserPreferenceChanged += (_, e) =>
@@ -58,7 +64,6 @@ public sealed class ThemeManager
 
     public event EventHandler? Changed;
 
-    public Color this[string role] => _brushes[role].Color;
 
     public void Apply(bool animate)
     {
@@ -67,16 +72,16 @@ public sealed class ThemeManager
         var ease = new BezierEase { X1 = 0.2, Y1 = 0, X2 = 0, Y2 = 1 };
         foreach (var (role, color) in scheme)
         {
-            var b = _brushes[role];
+            var src = _sources[role];
             if (animate)
             {
-                b.BeginAnimation(SolidColorBrush.ColorProperty,
+                src.BeginAnimation(ColorSource.ColorProperty,
                     new ColorAnimation(color, TimeSpan.FromMilliseconds(450)) { EasingFunction = ease });
             }
             else
             {
-                b.BeginAnimation(SolidColorBrush.ColorProperty, null);
-                b.Color = color;
+                src.BeginAnimation(ColorSource.ColorProperty, null);
+                src.Color = color;
             }
         }
         // цвета для эффектов (тени, градиенты) — без анимации
@@ -116,4 +121,15 @@ public sealed class ThemeManager
         }
         return null;
     }
+}
+
+/// <summary>Анимируемый цвет — источник привязки для кистей темы.</summary>
+public sealed class ColorSource : Animatable
+{
+    public static readonly DependencyProperty ColorProperty =
+        DependencyProperty.Register(nameof(Color), typeof(Color), typeof(ColorSource), new PropertyMetadata(Colors.Transparent));
+
+    public Color Color { get => (Color)GetValue(ColorProperty); set => SetValue(ColorProperty, value); }
+
+    protected override Freezable CreateInstanceCore() => new ColorSource();
 }
