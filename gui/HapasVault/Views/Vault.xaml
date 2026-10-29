@@ -285,7 +285,7 @@
 
   <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-      <StackPanel Margin="32,24,32,40" MaxWidth="820" HorizontalAlignment="Left">
+      <StackPanel Margin="32,24,32,40">
         <TextBlock Style="{StaticResource Display.Emphasized}" FontSize="40" LineHeight="48" Text="Настройки" />
 
         <!-- оформление -->
