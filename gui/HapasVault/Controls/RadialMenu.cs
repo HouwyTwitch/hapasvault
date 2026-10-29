@@ -348,6 +348,11 @@ public sealed class RadialMenu : FrameworkElement
         dc.PushOpacity(Math.Clamp(open * 1.4, 0, 1));
         dc.PushTransform(new ScaleTransform(scale, scale, c.X, c.Y));
 
+        // подложка: сквозь зазоры между секторами не просвечивает окно позади
+        double back = (_twoRings ? R1b + (R2b - R1b) * _outer : R2a + 20) + 10;
+        var backdrop = new SolidColorBrush(C("Surface")) { Opacity = 0.88 };
+        dc.DrawEllipse(backdrop, null, c, back, back);
+
         if (_twoRings) DrawTwoRings(dc, c);
         else DrawRing(dc, c, _flat, R1a, R2a + 20, 0, 360.0 / Math.Max(1, _flat.Count), _hoverEntry, 1, alignStart: false);
 
