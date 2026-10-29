@@ -99,6 +99,18 @@ internal static class Screenshots
             await vault.Detail!.RevealCommand.ExecuteAsync(null);
         });
 
+        // буфер обмена: быстро, без блокировки, текст на месте, очистка работает
+        await Shot("10b-clipboard", async () =>
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            if (!await shell.Clipboard.CopyAsync("секрет-123", 0)) throw new InvalidOperationException("копирование не удалось");
+            if (sw.ElapsedMilliseconds > 1000) throw new InvalidOperationException($"копирование заняло {sw.ElapsedMilliseconds} мс");
+            if (Clipboard.GetText() != "секрет-123") throw new InvalidOperationException("в буфере не тот текст");
+            shell.Clipboard.Clear();
+            if (Clipboard.ContainsText()) throw new InvalidOperationException("буфер не очистился");
+            Console.WriteLine($"     clipboard: {sw.ElapsedMilliseconds} мс");
+        });
+
         var vaultShell = (VaultShellViewModel?)shell.Page;
         await Shot("11-editor", () =>
         {

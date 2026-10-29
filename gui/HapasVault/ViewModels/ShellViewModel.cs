@@ -277,10 +277,10 @@ public sealed partial class ShellViewModel : ObservableObject
     [RelayCommand]
     private void CloseDialog() => Dialog?.Close(false);
 
-    public void CopySecret(string text, string what)
+    public async Task CopySecretAsync(string text, string what)
     {
         int seconds = Settings.ClearClipboard ? Settings.ClipboardSeconds : 0;
-        if (Clipboard.Copy(text, seconds))
+        if (await Clipboard.CopyAsync(text, seconds))
             Snackbar.Show(seconds > 0 ? $"{what} скопирован. Буфер очистится через {seconds} с" : $"{what} скопирован");
         else
             Snackbar.Show("Буфер обмена занят другой программой");

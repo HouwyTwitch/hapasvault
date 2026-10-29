@@ -321,13 +321,13 @@ public sealed partial class DetailViewModel : ObservableObject
     [RelayCommand]
     private async Task CopyLogin()
     {
-        if (await FetchAsync() is { } c) _vault.Shell.CopySecret(c.Login, "Логин");
+        if (await FetchAsync() is { } c) await _vault.Shell.CopySecretAsync(c.Login, "Логин");
     }
 
     [RelayCommand]
     private async Task CopyPassword()
     {
-        if (await FetchAsync() is { } c) _vault.Shell.CopySecret(c.Password, "Пароль");
+        if (await FetchAsync() is { } c) await _vault.Shell.CopySecretAsync(c.Password, "Пароль");
     }
 
     [RelayCommand]
