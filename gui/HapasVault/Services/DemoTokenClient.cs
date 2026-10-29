@@ -73,11 +73,10 @@ public sealed class DemoTokenClient : ITokenClient
     public Task DetachAsync() { IsAttached = false; _unlocked = false; return Task.CompletedTask; }
     public Task ConnectAsync() => Task.CompletedTask;
 
-    public async Task<uint> PairAsync()
+    public async Task PairAsync()
     {
         await Delay(400);
         IsPaired = true;
-        return 482_913;
     }
 
     public Task ForgetPairingAsync() { IsPaired = false; return Task.CompletedTask; }

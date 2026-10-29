@@ -24,7 +24,7 @@
 #  define PMAPI __attribute__((visibility("default")))
 #endif
 
-#define PMAPI_VERSION 1
+#define PMAPI_VERSION 2   /* 2: pmapi_pair без кода сверки */
 
 typedef struct pmapi pmapi;
 
@@ -52,7 +52,7 @@ PMAPI int     pmapi_attach(pmapi *h, uint16_t port);
 PMAPI void    pmapi_detach(pmapi *h);
 PMAPI int     pmapi_is_attached(const pmapi *h);
 
-PMAPI int     pmapi_pair(pmapi *h, uint32_t *code);
+PMAPI int     pmapi_pair(pmapi *h);
 PMAPI int     pmapi_forget_pairing(pmapi *h);   /* токен сброшен без этого ПК */
 PMAPI int     pmapi_connect(pmapi *h);
 PMAPI int     pmapi_info(pmapi *h, pmapi_info_t *info);

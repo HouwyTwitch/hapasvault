@@ -68,8 +68,9 @@ int  pmc_identity_save(const pm_client *c, const char *path); /* Windows: DPAPI 
 int  pmc_identity_load(pm_client *c, const char *path);
 void pmc_wipe(pm_client *c);
 
-/* Сопряжение (один раз): code — 6 цифр для сверки с токеном/второй стороной */
-int  pmc_pair(pm_client *c, uint32_t *code);
+/* Сопряжение (один раз): обмен статическими ключами X25519. Токен запоминает
+ * первый ПК и до сброса отказывает остальным; сессии — Noise KK на этих ключах. */
+int  pmc_pair(pm_client *c);
 
 /* Сессия */
 int  pmc_connect(pm_client *c);

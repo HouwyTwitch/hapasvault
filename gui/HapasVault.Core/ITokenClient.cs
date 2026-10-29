@@ -11,7 +11,7 @@ public interface ITokenClient : IDisposable
     Task AttachAsync();
     Task DetachAsync();
     Task ConnectAsync();
-    Task<uint> PairAsync();
+    Task PairAsync();
     Task ForgetPairingAsync();
     Task<TokenInfo> GetInfoAsync();
 

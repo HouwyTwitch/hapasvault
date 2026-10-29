@@ -20,7 +20,5 @@ void pm_salt_from_kpc(const uint8_t k_pc[32], uint8_t salt[16]);
 void pm_vault_key(uint8_t k_vault[32], const uint8_t k_token[32],
                   const uint8_t k_pc[32], const uint8_t pw_hash[32]);
 
-/* Короткий код сверки при сопряжении (6 цифр), одинаков на обеих сторонах. */
-uint32_t pm_pairing_code(const uint8_t token_pub[32], const uint8_t pc_pub[32]);
 
 #endif

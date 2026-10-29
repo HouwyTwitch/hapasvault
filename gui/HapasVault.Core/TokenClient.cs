@@ -67,11 +67,7 @@ public sealed unsafe partial class TokenClient : ITokenClient
 
     public Task ConnectAsync() => Call(h => Native.pmapi_connect(h), connecting: true);
 
-    public Task<uint> PairAsync() => Run(h =>
-    {
-        Check(Native.pmapi_pair(h, out uint code), connecting: true);
-        return code;
-    });
+    public Task PairAsync() => Call(h => Native.pmapi_pair(h), connecting: true);
 
     public Task ForgetPairingAsync() => Call(h => Native.pmapi_forget_pairing(h));
 

@@ -28,7 +28,7 @@ internal static unsafe partial class Native
     [LibraryImport(Lib)] internal static partial void pmapi_detach(nint h);
     [LibraryImport(Lib)] internal static partial int pmapi_is_attached(nint h);
 
-    [LibraryImport(Lib)] internal static partial int pmapi_pair(nint h, out uint code);
+    [LibraryImport(Lib)] internal static partial int pmapi_pair(nint h);
     [LibraryImport(Lib)] internal static partial int pmapi_forget_pairing(nint h);
     [LibraryImport(Lib)] internal static partial int pmapi_connect(nint h);
     [LibraryImport(Lib)] internal static partial int pmapi_info(nint h, out Info info);

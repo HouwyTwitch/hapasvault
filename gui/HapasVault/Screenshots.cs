@@ -48,14 +48,13 @@ internal static class Screenshots
 
         await Shot("01-connect", () => { shell.Page = new ConnectViewModel(shell); return Task.CompletedTask; });
 
-        await Shot("02-pair", async () =>
+        await Shot("02-pair", () => shell.EnterDemoAsync(new DemoTokenClient(setup: false, paired: false)));
+
+        await Shot("03-welcome", async () =>
         {
-            await shell.EnterDemoAsync(new DemoTokenClient(setup: false, paired: false));
             var pair = (PairViewModel)shell.Page!;
             await pair.PairCommand.ExecuteAsync(null);
         });
-
-        await Shot("03-welcome", async () => { await shell.RefreshAsync(); });
 
         SetupViewModel? setup = null;
         await Shot("04-setup-intro", () =>

@@ -156,7 +156,7 @@ static int simple_cmd(pm_client *c, uint8_t cmd)
 
 /* ---------------- сопряжение и сессия ---------------- */
 
-int pmc_pair(pm_client *c, uint32_t *code)
+int pmc_pair(pm_client *c)
 {
     c->buf_out[0] = FR_PAIR;
     memcpy(c->buf_out + 1, c->pk, 32);
@@ -165,7 +165,6 @@ int pmc_pair(pm_client *c, uint32_t *code)
     if (r != 33 || c->buf_in[0] != FR_PAIR) return PMC_E_PROTO;
     memcpy(c->token_pk, c->buf_in + 1, 32);
     c->paired = 1;
-    if (code) *code = pm_pairing_code(c->token_pk, c->pk);
     return 0;
 }
 

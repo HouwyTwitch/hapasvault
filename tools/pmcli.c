@@ -173,9 +173,8 @@ int main(int argc, char **argv)
         if (!strcmp(cmd, "quit") || !strcmp(cmd, "exit")) break;
         else if (!strcmp(cmd, "help")) help();
         else if (!strcmp(cmd, "pair")) {
-            uint32_t code;
-            if (report(pmc_pair(&g_c, &code)) == 0) {
-                printf("  Сопряжено. Код сверки: %06u\n", code);
+            if (report(pmc_pair(&g_c)) == 0) {
+                printf("  Сопряжено.\n");
                 save_id();
                 report(pmc_connect(&g_c));
             }

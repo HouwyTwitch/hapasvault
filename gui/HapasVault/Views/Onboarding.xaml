@@ -113,39 +113,25 @@
           <c:MorphShape Width="120" Height="120" Shape="Square" TargetShape="Cookie4" HoverMorph="True" Fill="{DynamicResource SecondaryContainer}">
             <c:Icon Data="{StaticResource Icon.Devices}" Width="52" Height="52" Foreground="{DynamicResource OnSecondaryContainer}" />
           </c:MorphShape>
-          <c:WavyProgress Width="96" VerticalAlignment="Center" Margin="14,0" Value="{Binding Link}" IsIndeterminate="{Binding IsWorking}"
+          <c:WavyProgress Width="96" VerticalAlignment="Center" Margin="14,0" IsIndeterminate="{Binding IsWorking}"
                           Foreground="{DynamicResource Primary}" Track="{DynamicResource SecondaryContainer}" />
-          <c:MorphShape Width="120" Height="120" Shape="Cookie9" TargetShape="Sunny" IsMorphed="{Binding IsPaired}" Spin="6"
+          <c:MorphShape Width="120" Height="120" Shape="Cookie9" TargetShape="Sunny" IsMorphed="{Binding IsWorking}" Spin="6"
                         Fill="{DynamicResource PrimaryContainer}">
             <c:Icon Data="{StaticResource Icon.Usb}" Width="52" Height="52" Foreground="{DynamicResource OnPrimaryContainer}" />
           </c:MorphShape>
         </StackPanel>
-
-        <StackPanel Visibility="{Binding IsPaired, Converter={StaticResource VisibleWhen}, ConverterParameter=invert}">
-          <TextBlock Style="{StaticResource Headline.Emphasized}" TextAlignment="Center" Margin="0,40,0,10" Text="Сопряжение с токеном" />
-          <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}"
-                     Text="Компьютер и токен обменяются ключами. Это делается один раз — после этого другой компьютер не сможет работать с вашим токеном." />
-          <Border CornerRadius="20" Padding="18,14" Background="{DynamicResource ErrorContainer}" Margin="0,20,0,0"
-                  Visibility="{Binding Error, Converter={StaticResource VisibleWhen}}">
-            <DockPanel>
-              <c:Icon Data="{StaticResource Icon.Warning}" Foreground="{DynamicResource OnErrorContainer}" Margin="0,0,12,0" />
-              <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource OnErrorContainer}" Text="{Binding Error}" VerticalAlignment="Center" />
-            </DockPanel>
-          </Border>
-          <Button Style="{StaticResource Button.Filled.Large}" Content="Сопрячь" c:A.Icon="{StaticResource Icon.Link}" HorizontalAlignment="Center"
-                  Margin="0,32,0,0" Command="{Binding PairCommand}" IsEnabled="{Binding IsWorking, Converter={StaticResource Not}}" IsDefault="True" />
-        </StackPanel>
-
-        <StackPanel Visibility="{Binding IsPaired, Converter={StaticResource VisibleWhen}}" c:A.Enter="0">
-          <TextBlock Style="{StaticResource Headline.Emphasized}" TextAlignment="Center" Margin="0,40,0,10" Text="Сверьте код" />
-          <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}"
-                     Text="Код должен совпадать с кодом на токене. Если коды разные — отключите токен: кто-то вмешивается в соединение." />
-          <Border CornerRadius="32" Padding="36,18" Margin="0,28,0,0" HorizontalAlignment="Center" Background="{DynamicResource SurfaceContainerHigh}">
-            <TextBlock Text="{Binding Code}" FontFamily="{StaticResource Font.Mono}" FontSize="52" FontWeight="SemiBold" Foreground="{DynamicResource Primary}" />
-          </Border>
-          <Button Style="{StaticResource Button.Filled.Large}" Content="Коды совпадают" c:A.Icon="{StaticResource Icon.Check}"
-                  HorizontalAlignment="Center" Margin="0,32,0,0" Command="{Binding ContinueCommand}" IsDefault="True" />
-        </StackPanel>
+        <TextBlock Style="{StaticResource Headline.Emphasized}" TextAlignment="Center" Margin="0,40,0,10" Text="Сопряжение с токеном" />
+        <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}"
+                   Text="Компьютер и токен обменяются ключами. Токен запомнит этот компьютер и не станет работать с другими, пока его не сбросят." />
+        <Border CornerRadius="20" Padding="18,14" Background="{DynamicResource ErrorContainer}" Margin="0,20,0,0"
+                Visibility="{Binding Error, Converter={StaticResource VisibleWhen}}">
+          <DockPanel>
+            <c:Icon Data="{StaticResource Icon.Warning}" Foreground="{DynamicResource OnErrorContainer}" Margin="0,0,12,0" />
+            <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource OnErrorContainer}" Text="{Binding Error}" VerticalAlignment="Center" />
+          </DockPanel>
+        </Border>
+        <Button Style="{StaticResource Button.Filled.Large}" Content="Сопрячь" c:A.Icon="{StaticResource Icon.Link}" HorizontalAlignment="Center"
+                Margin="0,32,0,0" Command="{Binding PairCommand}" IsEnabled="{Binding IsWorking, Converter={StaticResource Not}}" IsDefault="True" />
       </StackPanel>
     </Grid>
   </DataTemplate>

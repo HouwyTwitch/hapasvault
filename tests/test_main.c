@@ -164,7 +164,7 @@ static void test_full_flow(void)
 {
     pm_client c, imp;
     pmc_info_t info;
-    uint32_t code, id1, id2, id3;
+    uint32_t id1, id2, id3;
     char login[256], pw[PM_MAX_PASSWORD + 1];
 
     section("сопряжение");
@@ -172,12 +172,12 @@ static void test_full_flow(void)
     token_init();
     new_client(&c);
     CHECK_RC(pmc_connect(&c), PMC_E_NOT_PAIRED, "connect до сопряжения");
-    CHECK_RC(pmc_pair(&c, &code), 0, "pair");
+    CHECK_RC(pmc_pair(&c), 0, "pair");
     uint8_t tpk[32];
     token_public_key(tpk);
-    CHECK(code == pm_pairing_code(tpk, c.pk), "код сверки совпадает на обеих сторонах");
+    CHECK(memcmp(c.token_pk, tpk, 32) == 0, "ПК получил статический ключ токена");
     new_client(&imp);
-    CHECK_RC(pmc_pair(&imp, NULL), PMC_E_TOKEN - FE_ALREADY_PAIRED, "второй ПК не может сопрячься");
+    CHECK_RC(pmc_pair(&imp), PMC_E_TOKEN - FE_ALREADY_PAIRED, "второй ПК не может сопрячься");
 
     section("сессия и настройка");
     CHECK_RC(pmc_connect(&c), 0, "connect");
@@ -302,7 +302,7 @@ static void test_restore(void)
     hal_sim_erase();         /* «новая плата» */
     token_init();
     new_client(&c);          /* «новый ПК» */
-    CHECK_RC(pmc_pair(&c, NULL), 0, "pair");
+    CHECK_RC(pmc_pair(&c), 0, "pair");
     CHECK_RC(pmc_connect(&c), 0, "connect");
 
     char bad[768];
@@ -325,7 +325,7 @@ static void test_restore(void)
     hal_sim_erase();
     token_init();
     new_client(&c);
-    pmc_pair(&c, NULL);
+    pmc_pair(&c);
     pmc_connect(&c);
     CHECK_RC(pmc_restore(&c, g_words, PW, NULL, 0), 0, "restore без бэкапа");
     CHECK(list_count(&c) == 0, "пусто");
@@ -334,7 +334,7 @@ static void test_restore(void)
     CHECK_RC(pmc_factory_reset(&c), 0, "reset");
     pm_client n;
     new_client(&n);
-    CHECK_RC(pmc_pair(&n, NULL), 0, "после сброса можно сопрячь заново");
+    CHECK_RC(pmc_pair(&n), 0, "после сброса можно сопрячь заново");
     CHECK_RC(pmc_connect(&n), 0, "connect");
     pmc_info_t info;
     CHECK_RC(pmc_info(&n, &info), 0, "info");

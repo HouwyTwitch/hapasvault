@@ -9,8 +9,7 @@ public class TokenClientTests
     private static async Task<string[]> SetupFresh(TokenClient c)
     {
         await c.AttachAsync();
-        uint code = await c.PairAsync();
-        Assert.InRange(code, 0u, 999_999u);
+        await c.PairAsync();
         var words = await c.BeginSetupAsync();
         await c.CommitSetupAsync(Master);
         return words;

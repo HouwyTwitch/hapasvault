@@ -44,14 +44,3 @@ void pm_vault_key(uint8_t k_vault[32], const uint8_t k_token[32],
     crypto_blake2b_update(&ctx, pw_hash, 32);
     crypto_blake2b_final(&ctx, k_vault);
 }
-
-uint32_t pm_pairing_code(const uint8_t token_pub[32], const uint8_t pc_pub[32])
-{
-    uint8_t buf[64], h[8];
-    memcpy(buf, token_pub, 32);
-    memcpy(buf + 32, pc_pub, 32);
-    crypto_blake2b(h, sizeof h, buf, sizeof buf);
-    uint32_t v = (uint32_t)h[0] | (uint32_t)h[1] << 8 | (uint32_t)h[2] << 16 |
-                 (uint32_t)h[3] << 24;
-    return v % 1000000u;
-}

@@ -87,9 +87,9 @@ void pmapi_detach(pmapi *h)
 
 int pmapi_is_attached(const pmapi *h) { return h->sock != PM_BAD_SOCK; }
 
-int pmapi_pair(pmapi *h, uint32_t *code)
+int pmapi_pair(pmapi *h)
 {
-    int rc = io(h, pmc_pair(&h->c, code));
+    int rc = io(h, pmc_pair(&h->c));
     if (rc != 0) return rc;
     /* новый токен: старая половина ключа к нему не подходит */
     h->c.have_kpc = 0;

@@ -25,17 +25,14 @@ public sealed partial class ConnectViewModel(ShellViewModel shell) : ObservableO
     private Task Demo() => Shell.EnterDemoAsync();
 }
 
-/// <summary>Первое знакомство ПК и токена.</summary>
+/// <summary>
+/// Первое знакомство ПК и токена: обмен статическими ключами X25519.
+/// Токен запоминает первый ПК и до сброса отказывает остальным.
+/// </summary>
 public sealed partial class PairViewModel(ShellViewModel shell) : ObservableObject
 {
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsPaired), nameof(Link))] private string? _code;
     [ObservableProperty] private bool _isWorking;
     [ObservableProperty] private string? _error;
-
-    public bool IsPaired => Code != null;
-
-    /// <summary>Заполнение «волны» между ПК и токеном на иллюстрации.</summary>
-    public double Link => IsPaired ? 1 : 0;
 
     [RelayCommand]
     private async Task Pair()
@@ -44,8 +41,9 @@ public sealed partial class PairViewModel(ShellViewModel shell) : ObservableObje
         IsWorking = true;
         try
         {
-            uint code = await shell.Token.PairAsync();
-            Code = $"{code / 1000:000} {code % 1000:000}";
+            await shell.Token.PairAsync();
+            shell.Snackbar.Show("Токен сопряжён с этим компьютером");
+            await shell.RefreshAsync();
         }
         catch (TokenException e) when (e.Error is TokenError.AlreadyPaired)
         {
@@ -60,9 +58,6 @@ public sealed partial class PairViewModel(ShellViewModel shell) : ObservableObje
             IsWorking = false;
         }
     }
-
-    [RelayCommand]
-    private Task Continue() => shell.RefreshAsync();
 }
 
 /// <summary>Токен сопряжён, но пуст: создать новое хранилище или восстановить.</summary>
