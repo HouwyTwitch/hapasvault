@@ -15,6 +15,9 @@
 #include "session.h"
 #include "store.h"
 #include "token.h"
+#include "sha.h"
+#include "otp.h"
+#include "wire.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,9 +55,9 @@ static void hex(const char *h, uint8_t *out, size_t n)
 
 static int count_cb_n;
 static char seen_names[16][64];
-static void count_cb(void *ctx, uint32_t id, const char *cat, const char *name)
+static void count_cb(void *ctx, uint32_t id, const char *cat, const char *name, uint8_t otp)
 {
-    (void)ctx; (void)id; (void)cat;
+    (void)ctx; (void)id; (void)cat; (void)otp;
     if (count_cb_n < 16) snprintf(seen_names[count_cb_n], 64, "%s", name);
     count_cb_n++;
 }
@@ -358,6 +361,253 @@ static void test_real_argon_cost(void)
     pmc_wipe(&c);
 }
 
+/* ------------------------------------------------------------------ */
+
+static void hexs(const uint8_t *b, size_t n, char *out)
+{
+    for (size_t i = 0; i < n; i++) sprintf(out + 2 * i, "%02x", b[i]);
+}
+
+static size_t otp_blob(uint8_t *b, uint8_t type, uint8_t alg, uint8_t digits, uint8_t period, const char *secret)
+{
+    size_t l = strlen(secret);
+    b[0] = type; b[1] = alg; b[2] = digits; b[3] = period;
+    memcpy(b + 4, secret, l);
+    return 4 + l;
+}
+
+static uint8_t g_list_otp[8];
+static void otp_cb(void *ctx, uint32_t id, const char *cat, const char *name, uint8_t otp)
+{
+    (void)ctx; (void)cat; (void)name;
+    if (id < 8) g_list_otp[id] = otp;
+}
+
+static void test_hashes_and_otp_vectors(void)
+{
+    section("SHA-1, HMAC, TOTP (RFC 6238), Steam Guard");
+    uint8_t h[32], mac[32];
+    char hx[65];
+    pm_sha1((const uint8_t *)"abc", 3, h);
+    hexs(h, 20, hx);
+    CHECK(!strcmp(hx, "a9993e364706816aba3e25717850c26c9cd0d89d"), "SHA-1(abc)");
+    pm_hmac(PM_SHA256, (const uint8_t *)"Jefe", 4, (const uint8_t *)"what do ya want for nothing?", 28, mac);
+    hexs(mac, 32, hx);
+    CHECK(!strcmp(hx, "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"), "HMAC-SHA256 RFC 4231 #2");
+    uint8_t longkey[131];
+    memset(longkey, 0xaa, sizeof longkey);
+    const char *lm = "Test Using Larger Than Block-Size Key - Hash Key First";
+    pm_hmac(PM_SHA1, longkey, sizeof longkey, (const uint8_t *)lm, strlen(lm), mac);
+    hexs(mac, 20, hx);
+    CHECK(!strcmp(hx, "90d0dace1c1bdc957339307803160335bde6df2b"), "HMAC-SHA1 с ключом длиннее блока");
+
+    uint8_t b1[80], b2[80], bs[80];
+    size_t l1 = otp_blob(b1, OTP_TOTP, PM_SHA1, 8, 30, "12345678901234567890");
+    size_t l2 = otp_blob(b2, OTP_TOTP, PM_SHA256, 8, 30, "12345678901234567890123456789012");
+    size_t ls = otp_blob(bs, OTP_STEAM, PM_SHA1, 5, 30, "steam-test-secret-1234");
+    static const struct { uint64_t t; const char *sha1, *sha256; } rfc[] = {
+        {59, "94287082", "46119246"},
+        {1111111109, "07081804", "68084774"},
+        {2000000000, "69279037", "90698825"},
+        {20000000000ull, "65353130", "77737706"},
+    };
+    char code[OTP_CODE_MAX + 1];
+    int all = 1;
+    for (size_t i = 0; i < sizeof rfc / sizeof rfc[0]; i++) {
+        all &= pm_otp_code(b1, l1, rfc[i].t, code) == 8 && !strcmp(code, rfc[i].sha1);
+        all &= pm_otp_code(b2, l2, rfc[i].t, code) == 8 && !strcmp(code, rfc[i].sha256);
+    }
+    CHECK(all, "все векторы RFC 6238 (SHA1, SHA256)");
+    uint8_t b6[80];
+    size_t l6 = otp_blob(b6, OTP_TOTP, PM_SHA1, 6, 30, "12345678901234567890");
+    CHECK(pm_otp_code(b6, l6, 59, code) == 6 && !strcmp(code, "287082"), "6 цифр");
+    CHECK(pm_otp_code(bs, ls, 1700000000, code) == 5 && !strcmp(code, "T7WDC"), "Steam Guard");
+    CHECK(pm_otp_code(bs, ls, 1700000030, code) == 5 && !strcmp(code, "G4F35"), "Steam Guard, следующий период");
+
+    uint8_t bad[80];
+    CHECK(pm_otp_validate(bad, otp_blob(bad, OTP_TOTP, PM_SHA1, 9, 30, "12345678901234567890")) != 0, "9 цифр отвергнуты");
+    CHECK(pm_otp_validate(bad, otp_blob(bad, OTP_TOTP, 7, 6, 30, "12345678901234567890")) != 0, "неизвестный алгоритм");
+    CHECK(pm_otp_validate(bad, otp_blob(bad, OTP_TOTP, PM_SHA1, 6, 5, "12345678901234567890")) != 0, "период 5 с");
+    CHECK(pm_otp_validate(bad, otp_blob(bad, OTP_TOTP, PM_SHA1, 6, 30, "short")) != 0, "короткий секрет");
+    CHECK(pm_otp_validate(bad, otp_blob(bad, OTP_STEAM, PM_SHA1, 6, 30, "steam-test-secret-1234")) != 0,
+          "Steam только 5 символов");
+}
+
+/* Новый токен с настроенным хранилищем; k_vault — для подкладывания старых форматов. */
+static void fresh_vault(pm_client *c, uint8_t k_vault[32])
+{
+    hal_sim_open(NULL);
+    token_init();
+    new_client(c);
+    pmc_pair(c);
+    pmc_connect(c);
+    char words[512];
+    uint8_t seed[32], k_token[32], k_pc[32], salt[16], pw_hash[32];
+    pmc_setup_begin(c, words, sizeof words);
+    bip39_decode(words, seed);
+    pm_keys_from_seed(seed, k_token, k_pc);
+    pmc_setup_commit(c, PW);
+    pm_salt_from_kpc(k_pc, salt);
+    void *work = malloc((size_t)c->argon_blocks * 1024u);
+    crypto_argon2_config cfg = {CRYPTO_ARGON2_ID, c->argon_blocks, c->argon_passes, 1};
+    crypto_argon2_inputs in = {(const uint8_t *)PW, salt, (uint32_t)strlen(PW), 16};
+    crypto_argon2(pw_hash, 32, work, cfg, in, crypto_argon2_no_extras);
+    free(work);
+    pm_vault_key(k_vault, k_token, k_pc, pw_hash);
+}
+
+static void test_otp_protocol(void)
+{
+    pm_client c;
+    uint8_t kv[32];
+    char code[16], login[256], pw[PM_MAX_PASSWORD + 1];
+    uint8_t type = 0, period = 0;
+    fresh_vault(&c, kv);
+
+    section("OTP: запись, список, код считает токен");
+    uint8_t b1[80], bs[80];
+    size_t l1 = otp_blob(b1, OTP_TOTP, PM_SHA1, 8, 30, "12345678901234567890");
+    size_t ls = otp_blob(bs, OTP_STEAM, PM_SHA1, 5, 30, "steam-test-secret-1234");
+    uint32_t plain, totp, steam;
+    CHECK_RC(pmc_add(&c, "", "Без кода", "u", "p", &plain), 0, "запись без OTP");
+    CHECK_RC(pmc_add_otp(&c, "Работа", "GitHub", "ivan", "gh-pass", b1, l1, &totp), 0, "запись с TOTP");
+    CHECK_RC(pmc_add_otp(&c, "Игры", "Steam", "ivan_gamer", "st-pass", bs, ls, &steam), 0, "запись со Steam Guard");
+    memset(g_list_otp, 0xEE, sizeof g_list_otp);
+    CHECK_RC(pmc_list(&c, otp_cb, NULL), 0, "list");
+    CHECK(g_list_otp[plain] == OTP_NONE && g_list_otp[totp] == OTP_TOTP && g_list_otp[steam] == OTP_STEAM,
+          "список сообщает тип OTP");
+    CHECK_RC(pmc_get(&c, totp, login, sizeof login, pw, sizeof pw), 0, "get записи с OTP");
+    CHECK(!strcmp(login, "ivan") && !strcmp(pw, "gh-pass"), "get отдаёт только логин и пароль");
+    CHECK_RC(pmc_otp(&c, steam, 1700000000, code, sizeof code, &type, &period), 0, "код Steam");
+    CHECK(!strcmp(code, "T7WDC") && type == OTP_STEAM && period == 30, "Steam: T7WDC");
+    CHECK_RC(pmc_otp(&c, totp, 1700000000, code, sizeof code, &type, &period), 0, "код TOTP");
+    CHECK(!strcmp(code, "81921300") && type == OTP_TOTP, "TOTP совпадает с эталоном");
+    CHECK_RC(pmc_otp(&c, plain, 1700000000, code, sizeof code, NULL, NULL), ST_NO_OTP, "у записи без OTP кода нет");
+    CHECK_RC(pmc_otp(&c, 99, 1700000000, code, sizeof code, NULL, NULL), ST_NOT_FOUND, "нет записи");
+
+    section("OTP: коды «из будущего» не выдаются");
+    CHECK_RC(pmc_otp(&c, totp, 1700000000 + 400, code, sizeof code, NULL, NULL), ST_BAD_TIME,
+             "время на 400 с впереди часов токена — отказ");
+    CHECK_RC(pmc_otp(&c, totp, 1700000000 + 30, code, sizeof code, NULL, NULL), 0, "соседний период — можно");
+    CHECK_RC(pmc_otp(&c, totp, 1000, code, sizeof code, NULL, NULL), ST_BAD_TIME, "заведомо неверное время");
+    hal_sim_advance_ms(400 * 1000);
+    CHECK_RC(pmc_otp(&c, totp, 1700000000 + 400, code, sizeof code, NULL, NULL), 0, "часы токена догнали — можно");
+    CHECK(!strcmp(code, "90695910"), "код верный");
+
+    section("OTP: секрет не виден в flash, бэкапе и ответах");
+    const uint8_t *fl = hal_sim_flash();
+    CHECK(!memfind(fl, STORE_TOTAL_BYTES, "steam-test-secret", 17), "секрет Steam не виден в flash");
+    CHECK(!memfind(fl, STORE_TOTAL_BYTES, "12345678901234567890", 20), "секрет TOTP не виден в flash");
+    uint8_t bk[PM_MAX_FRAME];
+    size_t bkl;
+    CHECK_RC(pmc_backup(&c, bk, sizeof bk, &bkl), 0, "backup");
+    CHECK(!memfind(bk, bkl, "steam-test-secret", 17), "бэкап зашифрован");
+
+    section("OTP: ограничение частоты кодов");
+    hal_sim_advance_ms(TOKEN_RATE_WINDOW_MS + 10);
+    int ok = 1;
+    uint64_t now = 1700000000 + 400 + 60;
+    for (unsigned i = 0; i < TOKEN_OTP_RATE_N; i++) ok &= pmc_otp(&c, totp, now, code, sizeof code, NULL, NULL) == 0;
+    CHECK(ok, "первые N кодов");
+    CHECK_RC(pmc_otp(&c, totp, now, code, sizeof code, NULL, NULL), ST_RATE_LIMIT, "N+1 — отказ");
+
+    section("правка на месте (UPDATE)");
+    CHECK_RC(pmc_update(&c, totp, "Работа", "GitHub (новый)", "ivan2", "gh-pass-2", PMC_OTP_KEEP, NULL, 0), 0,
+             "переименовать, OTP оставить");
+    CHECK_RC(pmc_get(&c, totp, login, sizeof login, pw, sizeof pw), 0, "get");
+    CHECK(!strcmp(login, "ivan2") && !strcmp(pw, "gh-pass-2"), "id прежний, данные новые");
+    hal_sim_advance_ms(TOKEN_RATE_WINDOW_MS + 10);
+    CHECK_RC(pmc_otp(&c, totp, now, code, sizeof code, NULL, NULL), 0, "OTP пережил правку");
+    CHECK_RC(pmc_update(&c, totp, "Работа", "GitHub", "ivan", "p", PMC_OTP_SET, bs, ls), 0, "заменить OTP на Steam");
+    CHECK_RC(pmc_otp(&c, totp, now, code, sizeof code, &type, NULL), 0, "код");
+    CHECK(type == OTP_STEAM && strlen(code) == 5, "теперь Steam");
+    CHECK_RC(pmc_update(&c, totp, "Работа", "GitHub", "ivan", "p", PMC_OTP_REMOVE, NULL, 0), 0, "убрать OTP");
+    CHECK_RC(pmc_otp(&c, totp, now, code, sizeof code, NULL, NULL), ST_NO_OTP, "кода больше нет");
+    CHECK_RC(pmc_update(&c, 77, "", "x", "", "", PMC_OTP_KEEP, NULL, 0), ST_NOT_FOUND, "правка несуществующей");
+    uint8_t bad[80];
+    size_t bl = otp_blob(bad, OTP_TOTP, PM_SHA1, 9, 30, "12345678901234567890");
+    CHECK_RC(pmc_update(&c, totp, "", "x", "", "", PMC_OTP_SET, bad, bl), ST_BAD_ARGS, "неверные параметры OTP");
+    reboot_token();
+    pmc_connect(&c);
+    CHECK_RC(pmc_unlock(&c, PW), 0, "после перезагрузки");
+    memset(g_list_otp, 0xEE, sizeof g_list_otp);
+    CHECK_RC(pmc_list(&c, otp_cb, NULL), 0, "list");
+    CHECK(g_list_otp[totp] == OTP_NONE && g_list_otp[steam] == OTP_STEAM && g_list_otp[plain] == OTP_NONE,
+          "правки сохранены на flash");
+    hal_sim_advance_ms(TOKEN_RATE_WINDOW_MS + 10);
+    CHECK_RC(pmc_get(&c, steam, login, sizeof login, pw, sizeof pw), 0, "соседняя запись");
+    CHECK(!strcmp(pw, "st-pass"), "не задета правкой");
+    pmc_wipe(&c);
+}
+
+static void test_security_hardening(void)
+{
+    pm_client c;
+    uint8_t kv[32];
+    char login[256], pw[PM_MAX_PASSWORD + 1];
+    fresh_vault(&c, kv);
+
+    section("журнал только при открытом хранилище");
+    CHECK_RC(pmc_lock(&c), 0, "lock");
+    CHECK_RC(pmc_log(&c, log_cb, NULL), ST_LOCKED, "журнал закрыт");
+
+    section("счётчик неверных паролей переживает перезагрузку");
+    for (int i = 0; i < 3; i++) CHECK_RC(pmc_unlock(&c, "wrong"), ST_WRONG_KEY, "неверный пароль");
+    CHECK_RC(pmc_unlock(&c, PW), ST_BACKOFF, "задержка");
+    reboot_token();                                   /* выдернули токен, чтобы сбросить задержку */
+    CHECK_RC(pmc_connect(&c), 0, "connect");
+    CHECK_RC(pmc_unlock(&c, PW), ST_BACKOFF, "после перезагрузки задержка осталась");
+    hal_sim_advance_ms(1100);
+    CHECK_RC(pmc_unlock(&c, PW), 0, "после задержки открывается");
+    pmc_lock(&c);
+    reboot_token();
+    pmc_connect(&c);
+    CHECK_RC(pmc_unlock(&c, "wrong"), ST_WRONG_KEY, "после успеха счётчик обнулён: снова 3 бесплатные попытки");
+    CHECK_RC(pmc_unlock(&c, PW), 0, "unlock");
+
+    section("предел задержки — час");
+    pmc_lock(&c);
+    uint64_t total = 0;
+    for (int i = 0; i < 30; i++) {
+        int rc = pmc_unlock(&c, "wrong");
+        if (rc == ST_BACKOFF) { hal_sim_advance_ms(TOKEN_BACKOFF_MAX_MS); total += TOKEN_BACKOFF_MAX_MS; i--; continue; }
+        CHECK(rc == ST_WRONG_KEY, "неверный пароль");
+    }
+    hal_sim_advance_ms(TOKEN_BACKOFF_MAX_MS - 1000);
+    CHECK_RC(pmc_unlock(&c, PW), ST_BACKOFF, "через 59 мин ещё ждём");
+    hal_sim_advance_ms(2000);
+    CHECK_RC(pmc_unlock(&c, PW), 0, "через час можно");
+    (void)total;
+
+    section("миграция хранилища v1 -> v2");
+    static uint8_t v1[256];
+    size_t n = 0;
+    v1[n++] = 1; v1[n++] = 0;                 /* count */
+    wire_put32(v1 + n, 6); n += 4;            /* next_id, версия 0 = v1 */
+    wire_put32(v1 + n, 5); n += 4;            /* id */
+    const char *f[] = {"Старое", "Legacy", "olduser"};
+    for (int i = 0; i < 3; i++) { size_t l = strlen(f[i]); v1[n++] = (uint8_t)l; memcpy(v1 + n, f[i], l); n += l; }
+    v1[n++] = 6; v1[n++] = 0; memcpy(v1 + n, "old-pw", 6); n += 6;
+    CHECK(store_vault_save(kv, v1, n) == 0, "подложили хранилище старого формата");
+    reboot_token();
+    pmc_connect(&c);
+    CHECK_RC(pmc_unlock(&c, PW), 0, "открывается");
+    memset(g_list_otp, 0xEE, sizeof g_list_otp);
+    CHECK(list_count(&c) == 1 && seen("Legacy"), "запись на месте");
+    CHECK_RC(pmc_list(&c, otp_cb, NULL), 0, "list");
+    CHECK(g_list_otp[5] == OTP_NONE, "OTP нет");
+    CHECK_RC(pmc_get(&c, 5, login, sizeof login, pw, sizeof pw), 0, "get");
+    CHECK(!strcmp(login, "olduser") && !strcmp(pw, "old-pw"), "данные целы");
+    uint32_t id;
+    CHECK_RC(pmc_add(&c, "", "Новая", "n", "np", &id), 0, "add после миграции");
+    CHECK(id == 6, "нумерация продолжилась");
+    reboot_token();
+    pmc_connect(&c);
+    CHECK_RC(pmc_unlock(&c, PW), 0, "после перезагрузки (уже v2)");
+    CHECK(list_count(&c) == 2, "обе записи");
+    pmc_wipe(&c);
+}
+
 int main(int argc, char **argv)
 {
 #ifdef _WIN32
@@ -368,6 +618,9 @@ int main(int argc, char **argv)
     test_session();
     test_full_flow();
     test_restore();
+    test_hashes_and_otp_vectors();
+    test_otp_protocol();
+    test_security_hardening();
     if (argc > 1 && !strcmp(argv[1], "--argon")) test_real_argon_cost();
     printf("\nИтого: %d пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

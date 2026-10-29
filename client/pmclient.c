@@ -13,6 +13,7 @@
 #include "kdf.h"
 #include "monocypher.h"
 #include "wire.h"
+#include "otp.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -186,7 +187,12 @@ int pmc_connect(pm_client *c)
     /* Проверка ключей: если токен чужой, INFO не расшифруется */
     pmc_info_t info;
     int st = pmc_info(c, &info);
-    return st == 0 ? 0 : st;
+    if (st != 0) return st;
+    if (info.proto != PM_PROTO_VERSION) {
+        pm_session_clear(&c->sess);
+        return PMC_E_VERSION;
+    }
+    return 0;
 }
 
 int pmc_info(pm_client *c, pmc_info_t *info)
@@ -322,7 +328,8 @@ int pmc_list(pm_client *c, pmc_list_cb cb, void *ctx)
         uint32_t id = wire_u32(&r);
         copy_str(&r, cat, sizeof cat, 1);
         copy_str(&r, name, sizeof name, 1);
-        if (!r.err && cb) cb(ctx, id, cat, name);
+        uint8_t otp = wire_u8(&r);
+        if (!r.err && cb) cb(ctx, id, cat, name, otp);
     }
     return r.err ? PMC_E_PROTO : 0;
 }
@@ -343,27 +350,95 @@ int pmc_get(pm_client *c, uint32_t id, char *login, size_t login_cap,
     return r.err ? PMC_E_PROTO : 0;
 }
 
-int pmc_add(pm_client *c, const char *category, const char *name, const char *login,
-            const char *password, uint32_t *id_out)
+/* [cat][name][login][pw] — общая часть ADD и UPDATE. */
+static int put_fields(wire_w *w, const char *category, const char *name, const char *login,
+                      const char *password)
 {
     size_t pl = strlen(password);
     if (strlen(category) > PM_MAX_STR || strlen(name) > PM_MAX_STR ||
         strlen(login) > PM_MAX_STR || pl > PM_MAX_PASSWORD)
         return ST_BAD_ARGS;
-    uint8_t req[1 + 3 * 256 + 2 + PM_MAX_PASSWORD];
+    wire_put_str(w, category);
+    wire_put_str(w, name);
+    wire_put_str(w, login);
+    wire_put_u16(w, (uint16_t)pl);
+    wire_put_bytes(w, password, pl);
+    return 0;
+}
+
+static void put_otp(wire_w *w, const uint8_t *otp, size_t otp_len)
+{
+    wire_put_u8(w, (uint8_t)otp_len);
+    if (otp_len) wire_put_bytes(w, otp, otp_len);
+}
+
+#define FIELDS_MAX (3 * 256 + 2 + PM_MAX_PASSWORD + 1 + OTP_BLOB_MAX)
+
+int pmc_add_otp(pm_client *c, const char *category, const char *name, const char *login,
+                const char *password, const uint8_t *otp, size_t otp_len, uint32_t *id_out)
+{
+    if (otp_len > OTP_BLOB_MAX || (otp_len && pm_otp_validate(otp, otp_len) != 0)) return ST_BAD_ARGS;
+    uint8_t req[1 + FIELDS_MAX];
     wire_w w = {req, sizeof req, 0, 0};
     wire_put_u8(&w, CMD_ADD);
-    wire_put_str(&w, category);
-    wire_put_str(&w, name);
-    wire_put_str(&w, login);
-    wire_put_u16(&w, (uint16_t)pl);
-    wire_put_bytes(&w, password, pl);
+    int st = put_fields(&w, category, name, login, password);
+    if (st == 0) {
+        put_otp(&w, otp, otp_len);
+        const uint8_t *d;
+        size_t n;
+        st = w.err ? ST_BAD_ARGS : request(c, req, w.n, &d, &n);
+        if (st == ST_OK && id_out) *id_out = n >= 4 ? wire_get32(d) : 0;
+    }
+    crypto_wipe(req, sizeof req);
+    return st;
+}
+
+int pmc_add(pm_client *c, const char *category, const char *name, const char *login,
+            const char *password, uint32_t *id_out)
+{
+    return pmc_add_otp(c, category, name, login, password, NULL, 0, id_out);
+}
+
+int pmc_update(pm_client *c, uint32_t id, const char *category, const char *name, const char *login,
+               const char *password, int otp_mode, const uint8_t *otp, size_t otp_len)
+{
+    if (otp_mode < PMC_OTP_REMOVE || otp_mode > PMC_OTP_KEEP) return ST_BAD_ARGS;
+    if (otp_mode == PMC_OTP_SET && (otp_len == 0 || otp_len > OTP_BLOB_MAX || pm_otp_validate(otp, otp_len) != 0))
+        return ST_BAD_ARGS;
+    uint8_t req[1 + 4 + FIELDS_MAX + 1];
+    wire_w w = {req, sizeof req, 0, 0};
+    wire_put_u8(&w, CMD_UPDATE);
+    wire_put_u32(&w, id);
+    int st = put_fields(&w, category, name, login, password);
+    if (st == 0) {
+        wire_put_u8(&w, (uint8_t)otp_mode);
+        if (otp_mode == PMC_OTP_SET) put_otp(&w, otp, otp_len);
+        st = w.err ? ST_BAD_ARGS : request(c, req, w.n, NULL, NULL);
+    }
+    crypto_wipe(req, sizeof req);
+    return st;
+}
+
+int pmc_otp(pm_client *c, uint32_t id, uint64_t unix_time, char *code, size_t cap,
+            uint8_t *type, uint8_t *period)
+{
+    uint8_t req[13] = {CMD_OTP};
+    wire_put32(req + 1, id);
+    wire_put32(req + 5, (uint32_t)unix_time);
+    wire_put32(req + 9, (uint32_t)(unix_time >> 32));
     const uint8_t *d;
     size_t n;
-    int st = request(c, req, w.n, &d, &n);
-    crypto_wipe(req, sizeof req);
-    if (st == ST_OK && id_out) *id_out = n >= 4 ? wire_get32(d) : 0;
-    return st;
+    int st = request(c, req, sizeof req, &d, &n);
+    if (st != ST_OK) return st;
+    wire_r r = {d, n, 0};
+    uint8_t t = wire_u8(&r), p = wire_u8(&r);
+    if (cap == 0) return PMC_E_BUF;
+    copy_str(&r, code, cap, 1);
+    crypto_wipe(c->plain, sizeof c->plain);
+    if (r.err) return PMC_E_PROTO;
+    if (type) *type = t;
+    if (period) *period = p;
+    return 0;
 }
 
 int pmc_delete(pm_client *c, uint32_t id)
@@ -430,6 +505,9 @@ const char *pmc_strerror(int code)
     case ST_BACKOFF: return "много неверных попыток, подождите";
     case ST_FLASH: return "ошибка flash";
     case ST_UNKNOWN_CMD: return "неизвестная команда";
+    case ST_NO_OTP: return "у записи нет одноразовых кодов";
+    case ST_BAD_TIME: return "часы компьютера ушли вперёд относительно токена";
+    case PMC_E_VERSION: return "версия протокола токена не совпадает с программой";
     case PMC_E_IO: return "нет связи с токеном";
     case PMC_E_PROTO: return "ошибка протокола";
     case PMC_E_NO_SESSION: return "нет сессии (connect)";

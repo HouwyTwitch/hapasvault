@@ -19,6 +19,7 @@
 #include "pmclient.h"
 #include "pmnet.h"
 #include "monocypher.h"
+#include "otp.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,10 +72,10 @@ static void save_id(void)
         printf("  данные ПК сохранены в %s\n", g_idfile);
 }
 
-static void on_item(void *ctx, uint32_t id, const char *cat, const char *name)
+static void on_item(void *ctx, uint32_t id, const char *cat, const char *name, uint8_t otp)
 {
     (void)ctx;
-    printf("  %4u  [%s] %s\n", id, cat, name);
+    printf("  %4u  [%s] %s%s\n", id, cat, name, otp == OTP_STEAM ? "  (Steam Guard)" : otp ? "  (TOTP)" : "");
 }
 
 static const char *cmd_name(uint8_t c)
@@ -126,6 +127,7 @@ static void help(void)
         "  unlock / lock   открыть / закрыть хранилище\n"
         "  list            список записей (без паролей)\n"
         "  get <id>        логин и пароль одной записи\n"
+        "  otp <id>        одноразовый код (считает токен)\n"
         "  add             добавить запись\n"
         "  del <id>        удалить запись\n"
         "  backup <файл>   сохранить зашифрованную копию хранилища\n"
@@ -250,6 +252,11 @@ int main(int argc, char **argv)
             read_secret("  пароль: ", pw, sizeof pw);
             if (report(pmc_add(&g_c, cat, name, login, pw, &id)) == 0) printf("  добавлено, id=%u\n", id);
             crypto_wipe(pw, sizeof pw);
+        }
+        else if (!strcmp(cmd, "otp") && arg) {
+            char code[16];
+            if (report(pmc_otp(&g_c, (uint32_t)atoi(arg), (uint64_t)time(NULL), code, sizeof code, NULL, NULL)) == 0)
+                printf("  код: %s\n", code);
         }
         else if (!strcmp(cmd, "del") && arg) { if (report(pmc_delete(&g_c, (uint32_t)atoi(arg))) == 0) printf("  удалено\n"); }
         else if (!strcmp(cmd, "log")) report(pmc_log(&g_c, on_log, NULL));

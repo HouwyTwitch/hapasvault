@@ -156,6 +156,23 @@ int pmapi_add(pmapi *h, const char *category, const char *name, const char *logi
 }
 
 int pmapi_delete(pmapi *h, uint32_t id) { return io(h, pmc_delete(&h->c, id)); }
+
+int pmapi_add_otp(pmapi *h, const char *category, const char *name, const char *login,
+                  const char *password, const uint8_t *otp, size_t otp_len, uint32_t *id_out)
+{
+    return io(h, pmc_add_otp(&h->c, category, name, login, password, otp, otp_len, id_out));
+}
+
+int pmapi_update(pmapi *h, uint32_t id, const char *category, const char *name, const char *login,
+                 const char *password, int otp_mode, const uint8_t *otp, size_t otp_len)
+{
+    return io(h, pmc_update(&h->c, id, category, name, login, password, otp_mode, otp, otp_len));
+}
+
+int pmapi_otp(pmapi *h, uint32_t id, uint64_t unix_time, char *code, size_t cap, uint8_t *type, uint8_t *period)
+{
+    return io(h, pmc_otp(&h->c, id, unix_time, code, cap, type, period));
+}
 int pmapi_log(pmapi *h, pmapi_log_cb cb, void *ctx) { return io(h, pmc_log(&h->c, cb, ctx)); }
 
 int pmapi_backup(pmapi *h, uint8_t *out, size_t cap, size_t *len)

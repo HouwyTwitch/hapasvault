@@ -5,7 +5,7 @@
 
 #define CFG_MAGIC   0x46434D50u   /* "PMCF" */
 #define VLT_MAGIC   0x54564D50u   /* "PMVT" */
-#define CFG_VERSION 1
+#define CFG_VERSION 2   /* 2: + счётчик неверных паролей */
 
 /* Заголовок слота хранилища:
  *   0  magic   u32
@@ -40,7 +40,8 @@ static uint32_t slot_off(int slot)
 
 /* ---------------- конфигурация ---------------- */
 
-#define CFG_BODY 106   /* 4 magic + 1 ver + 4 seq + 1 flags + 32*3 */
+#define CFG_BODY_V1 106   /* 4 magic + 1 ver + 4 seq + 1 flags + 32*3 */
+#define CFG_BODY    110   /* + u32 fails */
 
 static void cfg_serialize(const pm_config *c, uint8_t *b)
 {
@@ -52,15 +53,18 @@ static void cfg_serialize(const pm_config *c, uint8_t *b)
     memcpy(b + 10, c->token_sk, 32);
     memcpy(b + 42, c->pc_pub, 32);
     memcpy(b + 74, c->k_token, 32);
+    put32(b + 106, c->fails);
     crypto_blake2b(b + CFG_BODY, 32, b, CFG_BODY);
 }
 
 static int cfg_parse(const uint8_t *b, pm_config *c)
 {
     uint8_t chk[32];
-    if (get32(b) != CFG_MAGIC || b[4] != CFG_VERSION) return -1;
-    crypto_blake2b(chk, 32, b, CFG_BODY);
-    if (crypto_verify32(chk, b + CFG_BODY) != 0) return -1;
+    if (get32(b) != CFG_MAGIC || (b[4] != 1 && b[4] != CFG_VERSION)) return -1;
+    size_t body = b[4] == 1 ? CFG_BODY_V1 : CFG_BODY;
+    crypto_blake2b(chk, 32, b, body);
+    if (crypto_verify32(chk, b + body) != 0) return -1;
+    c->fails = b[4] == 1 ? 0 : get32(b + 106);
     c->seq = get32(b + 5);
     c->flags = b[9];
     memcpy(c->token_sk, b + 10, 32);

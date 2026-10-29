@@ -24,6 +24,5 @@ int bip39_decode(const char *phrase, uint8_t entropy[32]);
 /* Удобство: энтропия -> строка "word1 word2 ..." (буфер >= 24*9). */
 void bip39_to_string(const uint8_t entropy[32], char *out, size_t cap);
 
-void pm_sha256(const uint8_t *msg, size_t len, uint8_t out[32]);
 
 #endif

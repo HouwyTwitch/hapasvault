@@ -24,7 +24,7 @@
 #  define PMAPI __attribute__((visibility("default")))
 #endif
 
-#define PMAPI_VERSION 2   /* 2: pmapi_pair без кода сверки */
+#define PMAPI_VERSION 3   /* 3: OTP, правка записи на месте */
 
 typedef struct pmapi pmapi;
 
@@ -33,7 +33,8 @@ typedef struct {
     uint32_t proto, count, uptime_s;
 } pmapi_info_t;
 
-typedef void (*pmapi_list_cb)(void *ctx, uint32_t id, const char *category, const char *name);
+/* otp_type: 0 — нет, 1 — TOTP, 2 — Steam Guard */
+typedef void (*pmapi_list_cb)(void *ctx, uint32_t id, const char *category, const char *name, uint8_t otp_type);
 typedef void (*pmapi_log_cb)(void *ctx, uint32_t uptime_s, uint8_t cmd, uint8_t status, uint32_t id);
 
 PMAPI int     pmapi_version(void);
@@ -70,6 +71,16 @@ PMAPI int     pmapi_get(pmapi *h, uint32_t id, char *login, size_t login_cap,
 PMAPI int     pmapi_add(pmapi *h, const char *category, const char *name, const char *login,
                         const char *password, uint32_t *id_out);
 PMAPI int     pmapi_delete(pmapi *h, uint32_t id);
+
+/* OTP: blob = [u8 type][u8 alg][u8 digits][u8 period][secret] (core/otp.h).
+ * Секрет уходит на токен и больше никогда не выдаётся. */
+PMAPI int     pmapi_add_otp(pmapi *h, const char *category, const char *name, const char *login,
+                            const char *password, const uint8_t *otp, size_t otp_len, uint32_t *id_out);
+/* otp_mode: 0 — убрать, 1 — задать otp, 2 — оставить прежний. */
+PMAPI int     pmapi_update(pmapi *h, uint32_t id, const char *category, const char *name, const char *login,
+                           const char *password, int otp_mode, const uint8_t *otp, size_t otp_len);
+PMAPI int     pmapi_otp(pmapi *h, uint32_t id, uint64_t unix_time, char *code, size_t cap,
+                        uint8_t *type, uint8_t *period);
 PMAPI int     pmapi_log(pmapi *h, pmapi_log_cb cb, void *ctx);
 PMAPI int     pmapi_backup(pmapi *h, uint8_t *out, size_t cap, size_t *len);
 PMAPI int     pmapi_factory_reset(pmapi *h);

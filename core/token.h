@@ -14,6 +14,9 @@
 #define TOKEN_RATE_WINDOW_MS    60000u              /* ... за это окно */
 #define TOKEN_FREE_ATTEMPTS     3u                  /* неверных паролей без задержки */
 #define TOKEN_LOG_SIZE          32u
+#define TOKEN_OTP_RATE_N        30u                 /* кодов OTP за то же окно */
+#define TOKEN_OTP_SKEW_S        300u                /* насколько время ПК может уйти вперёд */
+#define TOKEN_BACKOFF_MAX_MS    3600000u            /* предел задержки после неверных паролей */
 
 void token_init(void);
 

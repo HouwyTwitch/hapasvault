@@ -17,11 +17,13 @@
  *   ответ:   [u8 status][данные]
  *
  * Строки кодируются как [u8 len][bytes] (пароль — [u16 le len][bytes]).
+ * otp = [u8 len][len байт: u8 type, u8 alg, u8 digits, u8 period, secret] (len = 0 — нет),
+ * см. otp.h. Режим UPDATE: 0 — убрать OTP, 1 — задать (далее otp), 2 — оставить прежний.
  */
 #ifndef PM_PROTO_H
 #define PM_PROTO_H
 
-#define PM_PROTO_VERSION   1
+#define PM_PROTO_VERSION   2   /* 2: OTP, UPDATE, тип OTP в LIST */
 
 /* Типы кадров */
 #define FR_PAIR    0x01
@@ -43,10 +45,12 @@
 #define CMD_RESTORE       0x22  /* [k_token 32][k_pc 32][pw_hash 32][backup...] -> ok */
 #define CMD_UNLOCK        0x30  /* [k_pc 32][pw_hash 32] -> ok */
 #define CMD_LOCK          0x31  /* -> ok */
-#define CMD_LIST          0x40  /* -> [u16 n] n * {u32 id, str cat, str name} */
-#define CMD_GET           0x41  /* [u32 id] -> [str login][pw password] */
-#define CMD_ADD           0x42  /* [str cat][str name][str login][pw password] -> [u32 id] */
+#define CMD_LIST          0x40  /* -> [u16 n] n * {u32 id, str cat, str name, u8 otp_type} */
+#define CMD_GET           0x41  /* [u32 id] -> [str login][pw password] (секрет OTP не выдаётся) */
+#define CMD_ADD           0x42  /* [str cat][str name][str login][pw password][otp] -> [u32 id] */
 #define CMD_DELETE        0x43  /* [u32 id] -> ok */
+#define CMD_UPDATE        0x44  /* [u32 id][str cat][str name][str login][pw password][u8 mode][otp если mode=1] -> ok */
+#define CMD_OTP           0x45  /* [u32 id][u64 unix_time] -> [u8 type][u8 period][str code] */
 #define CMD_LOG           0x50  /* -> [u8 n] n * {u32 uptime_s, u8 cmd, u8 status, u32 id} */
 #define CMD_BACKUP        0x51  /* -> зашифрованный блоб хранилища как есть */
 #define CMD_FACTORY_RESET 0x60  /* (только открытое) -> ok, стирает всё, включая сопряжение */
@@ -69,6 +73,8 @@
 #define ST_BACKOFF        0x09  /* слишком много неверных попыток, подождите */
 #define ST_FLASH          0x0A
 #define ST_UNKNOWN_CMD    0x0B
+#define ST_NO_OTP         0x0C  /* у записи нет OTP */
+#define ST_BAD_TIME       0x0D  /* время ПК убежало вперёд относительно часов токена */
 
 /* Ограничения */
 #define PM_MAX_FRAME      (40u * 1024u)

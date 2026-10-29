@@ -24,6 +24,7 @@
 #define PMC_E_MEMORY     (-7)
 #define PMC_E_FILE       (-8)
 #define PMC_E_BUF        (-9)   /* мал буфер */
+#define PMC_E_VERSION    (-10)  /* другая версия протокола токена */
 #define PMC_E_TOKEN      (-100) /* -100 - FE_*: ошибка кадра от токена */
 
 /* Обмен кадрами: отправить req, получить ответ. Возвращает длину или <0. */
@@ -59,7 +60,8 @@ typedef struct {
     uint32_t uptime_s;
 } pmc_info_t;
 
-typedef void (*pmc_list_cb)(void *ctx, uint32_t id, const char *category, const char *name);
+/* otp_type: OTP_NONE / OTP_TOTP / OTP_STEAM (otp.h) */
+typedef void (*pmc_list_cb)(void *ctx, uint32_t id, const char *category, const char *name, uint8_t otp_type);
 typedef void (*pmc_log_cb)(void *ctx, uint32_t uptime_s, uint8_t cmd, uint8_t status, uint32_t id);
 
 /* Создание и идентичность */
@@ -94,6 +96,22 @@ int  pmc_get(pm_client *c, uint32_t id, char *login, size_t login_cap,
 int  pmc_add(pm_client *c, const char *category, const char *name, const char *login,
              const char *password, uint32_t *id_out);
 int  pmc_delete(pm_client *c, uint32_t id);
+
+/* Запись с одноразовыми кодами: otp — параметры и секрет (otp.h), секрет
+ * остаётся на токене и наружу не выдаётся. */
+int  pmc_add_otp(pm_client *c, const char *category, const char *name, const char *login,
+                 const char *password, const uint8_t *otp, size_t otp_len, uint32_t *id_out);
+
+/* Изменить запись на месте (id сохраняется). */
+#define PMC_OTP_REMOVE 0
+#define PMC_OTP_SET    1
+#define PMC_OTP_KEEP   2
+int  pmc_update(pm_client *c, uint32_t id, const char *category, const char *name, const char *login,
+                const char *password, int otp_mode, const uint8_t *otp, size_t otp_len);
+
+/* Код на момент unix_time; считает токен. type/period можно не запрашивать (NULL). */
+int  pmc_otp(pm_client *c, uint32_t id, uint64_t unix_time, char *code, size_t cap,
+             uint8_t *type, uint8_t *period);
 int  pmc_log(pm_client *c, pmc_log_cb cb, void *ctx);
 int  pmc_backup(pm_client *c, uint8_t *out, size_t cap, size_t *len);
 int  pmc_factory_reset(pm_client *c);

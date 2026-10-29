@@ -23,11 +23,13 @@ jobs:
       - name: Configure (sanitizers)
         run: >
           cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
       - name: Build (sanitizers)
         run: cmake --build build-asan -j
       - name: Test C core
         run: ctest --test-dir build-asan --output-on-failure
+      - name: Fuzz token parser (ASan/UBSan, 4 x 200k)
+        run: for s in 1 2 3 4; do ./build-asan/pmfuzz 200000 $s; done
 
       # pmapi.so для .NET собираем без санитайзеров (ASan нельзя подгрузить в dotnet)
       - name: Build native for .NET

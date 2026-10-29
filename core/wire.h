@@ -41,6 +41,13 @@ static inline uint32_t wire_u32(wire_r *r)
     return q ? wire_get32(q) : 0;
 }
 
+static inline uint64_t wire_u64(wire_r *r)
+{
+    const uint8_t *q = wire_bytes(r, 8);
+    if (!q) return 0;
+    return (uint64_t)wire_get32(q) | (uint64_t)wire_get32(q + 4) << 32;
+}
+
 static inline void wire_put_bytes(wire_w *w, const void *src, size_t len)
 {
     if (w->err || w->cap - w->n < len) { w->err = 1; return; }

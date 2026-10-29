@@ -15,7 +15,7 @@ endif()
 # Ядро токена — этот же набор файлов войдёт в прошивку RP2040
 add_library(pmcore STATIC
   core/token.c core/store.c core/session.c core/kdf.c
-  core/bip39.c core/bip39_words.c
+  core/bip39.c core/bip39_words.c core/sha.c core/otp.c
   third_party/monocypher/monocypher.c)
 target_include_directories(pmcore PUBLIC core third_party/monocypher)
 
@@ -50,3 +50,9 @@ add_executable(pmtests tests/test_main.c sim/hal_sim.c)
 target_include_directories(pmtests PRIVATE sim)
 target_link_libraries(pmtests PRIVATE pmcore pmclient)
 add_test(NAME pmtests COMMAND pmtests)
+
+# Фаззинг разбора команд и кадров (в CI — под ASan/UBSan)
+add_executable(pmfuzz tests/fuzz_main.c sim/hal_sim.c)
+target_include_directories(pmfuzz PRIVATE sim)
+target_link_libraries(pmfuzz PRIVATE pmcore pmclient)
+add_test(NAME pmfuzz COMMAND pmfuzz 30000)
