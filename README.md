@@ -23,6 +23,12 @@ tools/pmcli.exe       консольный клиент
 Релиз: `git tag v0.1.0 && git push origin v0.1.0` — архив `HapasVault-v0.1.0-win64.zip`
 появится на странице Releases.
 
+| | |
+|---|---|
+| ![Хранилище](docs/screenshots/10-vault.jpg) | ![Тёмная тема, экспрессивная палитра](docs/screenshots/15-vault-dark.jpg) |
+| ![Блокировка](docs/screenshots/08-lock.jpg) | ![Новая запись и генератор](docs/screenshots/11-editor.jpg) |
+| ![Фраза восстановления](docs/screenshots/05-setup-words.jpg) | ![Настройки](docs/screenshots/14-settings.jpg) |
+
 ### Попробовать приложение
 
 1. Запустите `tools\pmtoken_sim.exe` (виртуальный токен; flash — файл рядом).
