@@ -1,0 +1,70 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # нужно для публикации релиза по тегу
+
+jobs:
+  linux:
+    name: Linux (GCC + ASan/UBSan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  windows:
+    name: Windows x64 (MSVC)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        # статический CRT (/MT): exe запускаются без VC++ Redistributable
+        run: >
+          cmake -S . -B build -A x64
+          -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
+          -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = if ("${{ github.ref_type }}" -eq "tag") { "pmtoken-${{ github.ref_name }}-win64" } else { "pmtoken-$("${{ github.sha }}".Substring(0,7))-win64" }
+          $dir = "dist/$name"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item build/Release/pmtoken_sim.exe, build/Release/pmcli.exe, build/Release/pmtests.exe $dir
+          Copy-Item README.md $dir
+          Copy-Item third_party/monocypher/LICENCE.md "$dir/LICENCE-monocypher.md"
+          Compress-Archive -Path "$dir/*" -DestinationPath "dist/$name.zip"
+          "PKG_NAME=$name" >> $env:GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PKG_NAME }}
+          path: dist/${{ env.PKG_NAME }}/
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.PKG_NAME }}.zip
+          generate_release_notes: true
