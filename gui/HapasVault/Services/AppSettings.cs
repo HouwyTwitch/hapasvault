@@ -30,6 +30,8 @@ public sealed class AppSettings
     public HotkeyChoice Hotkey { get; set; } = HotkeyChoice.CtrlAltSpace;
     /// <summary>Нажимать Enter после автоввода пароля.</summary>
     public bool AutoTypeEnter { get; set; } = true;
+    /// <summary>Скрывать окна от захвата экрана (скриншоты, запись, демонстрация).</summary>
+    public bool HideFromCapture { get; set; } = true;
 
     private static readonly JsonSerializerOptions Json = new()
     {

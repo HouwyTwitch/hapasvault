@@ -17,6 +17,29 @@ internal static partial class Win32
     [LibraryImport("dwmapi.dll")]
     private static partial int DwmSetWindowAttribute(nint hwnd, int attr, ref int value, int size);
 
+    private const uint WDA_NONE = 0, WDA_EXCLUDEFROMCAPTURE = 0x11;
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool SetWindowDisplayAffinity(nint hwnd, uint affinity);
+
+    /// <summary>
+    /// Не отдавать окно в захват экрана (скриншоты, запись, демонстрация):
+    /// вместо него будет пустое место. Windows 10 2004+.
+    /// </summary>
+    public static void ExcludeFromCapture(Window w, bool exclude)
+    {
+        nint h = new WindowInteropHelper(w).Handle;
+        if (h == 0) return;
+        try
+        {
+            SetWindowDisplayAffinity(h, exclude ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE);
+        }
+        catch (EntryPointNotFoundException)
+        {
+        }
+    }
+
     public static void StyleWindow(Window w, bool dark, Color border)
     {
         nint h = new WindowInteropHelper(w).Handle;

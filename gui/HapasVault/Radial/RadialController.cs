@@ -84,6 +84,7 @@ public sealed class RadialController
     private RadialWindow Create()
     {
         var w = new RadialWindow();
+        w.SourceInitialized += (_, _) => Platform.Win32.ExcludeFromCapture(w, _shell.Settings.HideFromCapture);
         w.Cancelled += Close;
         w.UnlockRequested += async pw => await UnlockAsync(pw);
         w.Menu.Chosen += async (e, mode) => await ChooseAsync(e, mode);
@@ -110,7 +111,7 @@ public sealed class RadialController
             {
                 var vm = new EntryViewModel(i);
                 return new RadialEntry(i.Id, i.Name, i.Category, vm.Shape,
-                    (Brush)Application.Current.FindResource(vm.FillKey), (Brush)Application.Current.FindResource(vm.OnFillKey));
+                    (Brush)Application.Current.FindResource(vm.FillKey), (Brush)Application.Current.FindResource(vm.OnFillKey), i.Otp);
             })
             .GroupBy(e => e.Category)
             .OrderBy(g => g.Key.Length == 0).ThenBy(g => g.Key, StringComparer.CurrentCultureIgnoreCase)
@@ -159,11 +160,13 @@ public sealed class RadialController
 
     private async Task ChooseAsync(RadialEntry entry, AutoTypeMode mode)
     {
-        _window!.ShowStatus($"Расшифровываю «{entry.Name}» на токене…");
+        _window!.ShowStatus(mode == AutoTypeMode.Otp ? $"Токен считает код для «{entry.Name}»…" : $"Расшифровываю «{entry.Name}» на токене…");
         Credential cred;
         try
         {
-            cred = await _shell.Token.GetAsync(entry.Id);
+            cred = mode == AutoTypeMode.Otp
+                ? new Credential("", (await _shell.Token.GetOtpAsync(entry.Id)).Code)
+                : await _shell.Token.GetAsync(entry.Id);
         }
         catch (TokenException e)
         {
@@ -173,11 +176,18 @@ public sealed class RadialController
         }
         Close();
 
-        string what = mode == AutoTypeMode.LoginOnly ? "Логин" : "Пароль";
+        string what = mode switch { AutoTypeMode.LoginOnly => "Логин", AutoTypeMode.Otp => "Код", _ => "Пароль" };
         string secret = mode == AutoTypeMode.LoginOnly ? cred.Login : cred.Password;
         if (_target == 0)
         {
             await _shell.CopySecretAsync(secret, what);
+            return;
+        }
+        // в окна администратора Windows не пропускает ввод, причём молча — сразу в буфер
+        if (AutoType.IsElevated(_target) && !AutoType.IsElevated(0))
+        {
+            await _shell.CopySecretAsync(secret, what);
+            _shell.Snackbar.Show("Окно запущено от администратора — ввод туда запрещён. " + what + " скопирован");
             return;
         }
         if (!await AutoType.FocusAsync(_target))
@@ -188,10 +198,16 @@ public sealed class RadialController
         }
         await AutoType.WaitModifiersReleasedAsync();
         await Task.Delay(60);
-        if (!await AutoType.TypeAsync(Sequence(cred, mode, _shell.Settings.AutoTypeEnter)))
+        switch (await AutoType.TypeAsync(Sequence(cred, mode, _shell.Settings.AutoTypeEnter), _target))
         {
-            await _shell.CopySecretAsync(secret, what);
-            _shell.Snackbar.Show("Окно не принимает ввод (запущено от администратора?) — " + what.ToLowerInvariant() + " скопирован");
+            case AutoType.Result.FocusLost:
+                // фокус увело другое окно: ввод оборван, чтобы пароль не ушёл туда
+                _shell.Snackbar.Show("Ввод прерван: фокус перешёл в другое окно");
+                break;
+            case AutoType.Result.Rejected:
+                await _shell.CopySecretAsync(secret, what);
+                _shell.Snackbar.Show("Окно не принимает ввод — " + what.ToLowerInvariant() + " скопирован");
+                break;
         }
     }
 
@@ -200,6 +216,10 @@ public sealed class RadialController
     {
         switch (mode)
         {
+            case AutoTypeMode.Otp:
+                yield return new AutoType.Text(c.Password);
+                if (pressEnter) yield return new AutoType.Key(AutoType.VK_RETURN);
+                yield break;
             case AutoTypeMode.LoginOnly:
                 yield return new AutoType.Text(c.Login);
                 yield break;

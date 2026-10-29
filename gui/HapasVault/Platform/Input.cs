@@ -125,19 +125,28 @@ public static partial class AutoType
 
     public const ushort VK_TAB = 0x09, VK_RETURN = 0x0D;
 
-    /// <summary>Набрать последовательность. false — Windows не приняла ввод (например, окно администратора).</summary>
-    public static async Task<bool> TypeAsync(IEnumerable<Step> steps)
+    public enum Result { Ok, Rejected, FocusLost }
+
+    /// <summary>
+    /// Набрать последовательность. Если задано окно target, перед каждым символом
+    /// проверяется, что оно всё ещё на переднем плане: перехватившее фокус окно
+    /// (всплывающее, фишинговое) не получит остаток пароля.
+    /// </summary>
+    public static async Task<Result> TypeAsync(IEnumerable<Step> steps, nint target = 0)
     {
+        bool Still() => target == 0 || GetForegroundWindow() == target;
         foreach (var step in steps)
         {
+            if (!Still()) return Result.FocusLost;
             switch (step)
             {
                 case Key k:
-                    if (!SendKey(k.VirtualKey)) return false;
+                    if (!SendKey(k.VirtualKey)) return Result.Rejected;
                     break;
                 case Text t:
                     foreach (char ch in t.Value)
                     {
+                        if (!Still()) return Result.FocusLost;
                         bool ok = ch switch
                         {
                             '\r' => true,
@@ -145,15 +154,58 @@ public static partial class AutoType
                             '\t' => SendKey(VK_TAB),
                             _ => SendChar(ch),
                         };
-                        if (!ok) return false;
+                        if (!ok) return Result.Rejected;
                         await Task.Delay(2);   // некоторые поля теряют слишком быстрый ввод
                     }
                     break;
             }
             await Task.Delay(30);
         }
-        return true;
+        return Result.Ok;
     }
+
+    /// <summary>Процесс окна (0 — наш) запущен с повышенными правами.</summary>
+    public static bool IsElevated(nint hwnd)
+    {
+        uint pid = (uint)Environment.ProcessId;
+        if (hwnd != 0) GetWindowThreadProcessId(hwnd, out pid);
+        nint proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (proc == 0) return hwnd != 0;   // не можем даже спросить — скорее всего, выше нас по правам
+        try
+        {
+            if (!OpenProcessToken(proc, TOKEN_QUERY, out nint token)) return hwnd != 0;
+            try
+            {
+                return GetTokenInformation(token, TokenElevation, out int elevated, sizeof(int), out _) && elevated != 0;
+            }
+            finally
+            {
+                CloseHandle(token);
+            }
+        }
+        finally
+        {
+            CloseHandle(proc);
+        }
+    }
+
+    private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, TOKEN_QUERY = 0x0008;
+    private const int TokenElevation = 20;
+
+    [LibraryImport("kernel32.dll")]
+    private static partial nint OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint pid);
+
+    [LibraryImport("advapi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool OpenProcessToken(nint process, uint access, out nint token);
+
+    [LibraryImport("advapi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetTokenInformation(nint token, int cls, out int info, int len, out int returned);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool CloseHandle(nint handle);
 
     private static unsafe bool SendChar(char ch)
     {

@@ -79,7 +79,8 @@ public sealed class Sim : IDisposable
 
     public TokenClient Client(string identity = "pc.id")
     {
-        var c = new TokenClient(Path.Combine(Dir, identity)) { Port = Port };
+        // профиль с кириллицей в пути: на Windows ловит открытие файла через ANSI
+        var c = new TokenClient(Path.Combine(Dir, "Профиль Иван", identity)) { Port = Port };
         c.SetArgon(1024, 1);   // быстрее в тестах; на всех «ПК» теста одинаково
         return c;
     }

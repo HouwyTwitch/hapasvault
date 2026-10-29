@@ -79,6 +79,8 @@ public sealed partial class EntryViewModel : ObservableObject
     public string CategoryOrDefault => Item.Category.Length > 0 ? Item.Category : VaultViewModel.NoCategory;
     public string Initial => Item.Name.Trim().Length > 0 ? char.ToUpper(Item.Name.Trim()[0]).ToString() : "?";
     public ShapeKind Shape { get; }
+    public OtpKind Otp => Item.Otp;
+    public bool HasOtp => Item.Otp != OtpKind.None;
     public string FillKey { get; }
     public string OnFillKey { get; }
 
@@ -199,7 +201,9 @@ public sealed partial class VaultViewModel(ShellViewModel shell) : ObservableObj
     {
         var editor = new EditorDialogViewModel(KnownCategories, async ed =>
         {
-            uint? id = await Shell.RunAsync(() => Shell.Token.AddAsync(ed.Category.Trim(), ed.Name.Trim(), ed.Login.Trim(), ed.Password));
+            var (change, secret) = ed.ResolvedOtp;
+            uint? id = await Shell.RunAsync(() => Shell.Token.AddAsync(ed.Category.Trim(), ed.Name.Trim(), ed.Login.Trim(), ed.Password,
+                change == OtpChange.Set ? secret : null));
             if (id == null) return false;
             await LoadAsync(id);
             Shell.Snackbar.Show($"«{ed.Name.Trim()}» сохранена на токене");
@@ -213,17 +217,18 @@ public sealed partial class VaultViewModel(ShellViewModel shell) : ObservableObj
     {
         var editor = new EditorDialogViewModel(KnownCategories, async ed =>
         {
-            // у токена нет «изменить»: новая запись, затем удаление старой
-            uint? id = await Shell.RunAsync(() => Shell.Token.AddAsync(ed.Category.Trim(), ed.Name.Trim(), ed.Login.Trim(), ed.Password));
-            if (id == null) return false;
-            if (!await Shell.RunAsync(() => Shell.Token.DeleteAsync(e.Id)))
-                Shell.Snackbar.Show("Новая версия сохранена, но старую удалить не удалось");
-            await LoadAsync(id);
+            var (change, secret) = ed.ResolvedOtp;
+            if (!await Shell.RunAsync(() => Shell.Token.UpdateAsync(e.Id, ed.Category.Trim(), ed.Name.Trim(), ed.Login.Trim(), ed.Password,
+                    change, secret)))
+                return false;
+            await LoadAsync(e.Id);
             Shell.Snackbar.Show("Изменения сохранены");
             return true;
         })
         {
             IsEdit = true,
+            ExistingOtp = e.Otp,
+            OtpChoice = e.Otp,
             Name = e.Name,
             Category = e.Category,
             Login = current.Login,
@@ -237,7 +242,9 @@ public sealed partial class VaultViewModel(ShellViewModel shell) : ObservableObj
         var ok = await Shell.ShowDialogAsync(new ConfirmDialogViewModel
         {
             Title = $"Удалить «{e.Name}»?",
-            Message = "Запись будет стёрта с токена. Сразу после удаления её можно вернуть кнопкой «Отменить».",
+            Message = e.Otp != OtpKind.None
+                ? "Запись будет стёрта с токена вместе с секретом двухфакторных кодов — его не вернуть, понадобится заново подключить 2FA в сервисе. Логин и пароль можно вернуть кнопкой «Отменить»."
+                : "Запись будет стёрта с токена. Сразу после удаления её можно вернуть кнопкой «Отменить».",
             ConfirmText = "Удалить",
             IsDanger = true,
             IconKey = "Icon.Delete",
@@ -271,6 +278,76 @@ public sealed partial class DetailViewModel : ObservableObject
         _vault = vault;
         Entry = entry;
         _forget.Tick += (_, _) => Forget();
+        _otpTimer.Tick += async (_, _) => await OtpTickAsync();
+    }
+
+    // ---- одноразовый код: по запросу, обновляется на границе периода,
+    // через 90 с сам скрывается (не держим сессию токена живой бесконечно) ----
+    private const int OtpShowSeconds = 90;
+    private readonly DispatcherTimer _otpTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
+    private OtpCode? _otp;
+    private DateTime _otpShownAt;
+
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(OtpText))] private bool _isOtpShown;
+    [ObservableProperty] private double _otpProgress;
+    [ObservableProperty] private string _otpLeft = "";
+
+    public string OtpText => IsOtpShown && _otp != null ? Format(_otp) : Entry.Otp == OtpKind.Steam ? "•••••" : "••• •••";
+    public string OtpTitle => Entry.Otp == OtpKind.Steam ? "Код Steam Guard" : "Одноразовый код";
+
+    private static string Format(OtpCode c) => c.Kind == OtpKind.Steam || c.Code.Length < 6
+        ? c.Code
+        : c.Code.Length == 6 ? $"{c.Code[..3]} {c.Code[3..]}" : $"{c.Code[..(c.Code.Length / 2)]} {c.Code[(c.Code.Length / 2)..]}";
+
+    private async Task<OtpCode?> FetchOtpAsync()
+    {
+        var code = await _vault.Shell.RunAsync(() => _vault.Shell.Token.GetOtpAsync(Entry.Id));
+        _otp = code;
+        OnPropertyChanged(nameof(OtpText));
+        return code;
+    }
+
+    private async Task OtpTickAsync()
+    {
+        if (_otp == null) return;
+        var left = _otp.ValidUntil - DateTimeOffset.UtcNow;
+        if (left <= TimeSpan.Zero)
+        {
+            if ((DateTime.UtcNow - _otpShownAt).TotalSeconds > OtpShowSeconds) { HideOtp(); return; }
+            _otpTimer.Stop();
+            if (await FetchOtpAsync() == null) { HideOtp(); return; }
+            _otpTimer.Start();
+            return;
+        }
+        OtpProgress = left.TotalSeconds / _otp.Period;
+        OtpLeft = $"{Math.Ceiling(left.TotalSeconds):0} с";
+    }
+
+    private void HideOtp()
+    {
+        _otpTimer.Stop();
+        _otp = null;
+        IsOtpShown = false;
+        OtpProgress = 0;
+        OtpLeft = "";
+    }
+
+    [RelayCommand]
+    private async Task ShowOtp()
+    {
+        if (IsOtpShown) { HideOtp(); return; }
+        if (await FetchOtpAsync() == null) return;
+        _otpShownAt = DateTime.UtcNow;
+        IsOtpShown = true;
+        await OtpTickAsync();
+        _otpTimer.Start();
+    }
+
+    [RelayCommand]
+    private async Task CopyOtp()
+    {
+        var code = _otp is { } c && c.ValidUntil - DateTimeOffset.UtcNow > TimeSpan.FromSeconds(3) ? c : await FetchOtpAsync();
+        if (code != null) await _vault.Shell.CopySecretAsync(code.Code, "Код");
     }
 
     public EntryViewModel Entry { get; }
@@ -300,6 +377,7 @@ public sealed partial class DetailViewModel : ObservableObject
     /// <summary>Стереть расшифрованные данные из памяти интерфейса.</summary>
     public void Forget()
     {
+        HideOtp();
         _forget.Stop();
         _cred = null;
         IsRevealed = false;
@@ -376,6 +454,60 @@ public sealed partial class EditorDialogViewModel : DialogViewModel
     [ObservableProperty] private int _shake;
     [ObservableProperty] private int _spin;
 
+    // ---- двухфакторные коды: секрет уходит на токен и обратно не выдаётся ----
+    public OtpKind ExistingOtp { get; init; }
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(OtpVisible), nameof(OtpHint))] private OtpKind _otpChoice;
+    [ObservableProperty] private string _otpInput = "";
+    [ObservableProperty] private string? _otpStatus;
+    [ObservableProperty] private bool _otpOk;
+    [ObservableProperty] private string? _otpError;
+
+    public bool OtpVisible => OtpChoice != OtpKind.None;
+    public string OtpHint => OtpChoice == OtpKind.Steam
+        ? "shared_secret из maFile, сам maFile или steam:// — код Steam Guard будет считать токен"
+        : ExistingOtp != OtpKind.None
+            ? "Оставьте пустым, чтобы сохранить текущий секрет. Новый — otpauth:// или Base32"
+            : "Ссылка otpauth:// из QR-кода или секрет Base32 из настроек 2FA сервиса";
+
+    partial void OnOtpChoiceChanged(OtpKind value) => CheckOtp();
+    partial void OnOtpInputChanged(string value) => CheckOtp();
+
+    private void CheckOtp()
+    {
+        OtpError = null;
+        OtpOk = false;
+        if (OtpChoice == OtpKind.None || OtpInput.Trim().Length == 0)
+        {
+            OtpStatus = OtpChoice != OtpKind.None && ExistingOtp == OtpChoice ? "Текущий секрет останется на токене" : null;
+            return;
+        }
+        try
+        {
+            var s = OtpSecret.Parse(OtpInput, OtpChoice);
+            if (s.Kind != OtpChoice) OtpChoice = s.Kind;   // вставили ссылку другого типа — переключаемся
+            OtpStatus = s.Describe() + (s.Issuer is { Length: > 0 } i ? $" · {i}" : "") + $" · сейчас {s.Code(DateTimeOffset.UtcNow)}";
+            OtpOk = true;
+            if (Name.Trim().Length == 0 && s.Issuer is { Length: > 0 } issuer) Name = issuer;
+            if (Login.Trim().Length == 0 && s.Account is { Length: > 0 } account) Login = account;
+        }
+        catch (FormatException e)
+        {
+            OtpStatus = null;
+            OtpError = e.Message;
+        }
+    }
+
+    /// <summary>Что сделать с OTP при сохранении (после Validate).</summary>
+    public (OtpChange Change, OtpSecret? Secret) ResolvedOtp
+    {
+        get
+        {
+            if (OtpChoice == OtpKind.None) return (OtpChange.Remove, null);
+            if (OtpInput.Trim().Length == 0) return (OtpChange.Keep, null);
+            return (OtpChange.Set, OtpSecret.Parse(OtpInput, OtpChoice));
+        }
+    }
+
     public Strength Strength => Passwords.Rate(Password);
     public double StrengthValue => Math.Clamp(Passwords.EntropyBits(Password) / 100, 0, 1);
     public string StrengthText => Password.Length == 0 ? "" : $"{Passwords.Describe(Strength)} · ≈{Passwords.EntropyBits(Password):0} бит";
@@ -407,6 +539,10 @@ public sealed partial class EditorDialogViewModel : DialogViewModel
     private async Task Save()
     {
         Error = TokenClient.Validate(Category.Trim(), Name.Trim(), Login.Trim(), Password);
+        CheckOtp();
+        if (OtpChoice != OtpKind.None && OtpInput.Trim().Length == 0 && ExistingOtp != OtpChoice)
+            OtpError = "Вставьте секрет или ссылку otpauth://";
+        if (OtpError != null) Error ??= OtpError;
         if (Name.Trim().Length == 0)
         {
             NameError = "Укажите название";

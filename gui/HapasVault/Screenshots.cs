@@ -97,8 +97,11 @@ internal static class Screenshots
             await lockVm.UnlockCommand.ExecuteAsync(null);
             await Settle();
             var vault = ((VaultShellViewModel)shell.Page!).Vault;
-            vault.Selected = vault.Groups[1].Items[0];
+            vault.Selected = vault.Groups[1].Items[0];   // «Игры / Steam» — со Steam Guard
             await vault.Detail!.RevealCommand.ExecuteAsync(null);
+            await vault.Detail.ShowOtpCommand.ExecuteAsync(null);
+            if (!vault.Detail.IsOtpShown || vault.Detail.OtpText.Length != 5)
+                throw new InvalidOperationException("код Steam Guard не показан: " + vault.Detail.OtpText);
         });
 
         // буфер обмена: быстро, без блокировки, текст на месте, очистка работает
@@ -118,8 +121,9 @@ internal static class Screenshots
         {
             _ = vaultShell!.Vault.AddCommand.ExecuteAsync(null);
             var ed = (EditorDialogViewModel)shell.Dialog!;
-            ed.Name = "Госуслуги";
-            ed.Login = "ivan.petrov@yandex.ru";
+            ed.OtpChoice = HapasVault.Core.OtpKind.Totp;
+            ed.OtpInput = "otpauth://totp/GitHub:ivan.petrov?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=GitHub";
+            if (!ed.OtpOk || ed.Name != "GitHub") throw new InvalidOperationException("otpauth не разобран: " + ed.OtpError);
             ed.IsGeneratorOpen = true;
             return Task.CompletedTask;
         });
@@ -212,7 +216,8 @@ internal static class Screenshots
             box1.Focus();
             await Task.Delay(300);
             var cred = new HapasVault.Core.Credential("ivan.petrov", "Пароль-123 @#$ 🔑");
-            bool ok = await Platform.AutoType.TypeAsync(Radial.RadialController.Sequence(cred, AutoTypeMode.LoginPassword, pressEnter: false));
+            bool ok = await Platform.AutoType.TypeAsync(Radial.RadialController.Sequence(cred, AutoTypeMode.LoginPassword, pressEnter: false),
+                new System.Windows.Interop.WindowInteropHelper(test).Handle) == Platform.AutoType.Result.Ok;
             await Task.Delay(300);
             string got = $"«{box1.Text}» / «{box2.Text}»";
             test.Close();

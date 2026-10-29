@@ -29,6 +29,8 @@ public sealed partial class LogViewModel(ShellViewModel shell) : ObservableObjec
         0x41 => ("Icon.Key", "Расшифровка записи"),
         0x42 => ("Icon.Add", "Новая запись"),
         0x43 => ("Icon.Delete", "Удаление записи"),
+        0x44 => ("Icon.Edit", "Изменение записи"),
+        0x45 => ("Icon.ShieldLock", "Одноразовый код"),
         0x51 => ("Icon.Download", "Резервная копия"),
         _ => ("Icon.Info", $"Команда 0x{cmd:X2}"),
     };
@@ -85,6 +87,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         RadialEnabled = s.RadialEnabled;
         Hotkey = s.Hotkey;
         AutoTypeEnter = s.AutoTypeEnter;
+        HideFromCapture = s.HideFromCapture;
         _loading = false;
     }
 
@@ -104,6 +107,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _radialEnabled;
     [ObservableProperty] private HotkeyChoice _hotkey;
     [ObservableProperty] private bool _autoTypeEnter;
+    [ObservableProperty] private bool _hideFromCapture;
 
     private static uint ToArgb(Color c) => (uint)(c.A << 24 | c.R << 16 | c.G << 8 | c.B);
 
@@ -137,6 +141,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     partial void OnLockWithWindowsChanged(bool value) => Save(s => s.LockWithWindows = value);
     partial void OnClearClipboardChanged(bool value) => Save(s => s.ClearClipboard = value);
     partial void OnAutoTypeEnterChanged(bool value) => Save(s => s.AutoTypeEnter = value);
+    partial void OnHideFromCaptureChanged(bool value)
+    {
+        Save(s => s.HideFromCapture = value);
+        if (!_loading && System.Windows.Application.Current.MainWindow is MainWindow mw) mw.ApplyChrome();
+    }
     partial void OnRadialEnabledChanged(bool value) => SaveHotkey(s => s.RadialEnabled = value);
     partial void OnHotkeyChanged(HotkeyChoice value) => SaveHotkey(s => s.Hotkey = value);
 

@@ -23,6 +23,9 @@ public enum TokenError
     BadArgs,
     Flash,
     IdentityFile,
+    NoOtp,
+    BadTime,
+    Version,
 }
 
 public sealed class TokenException : Exception
@@ -53,6 +56,9 @@ public sealed class TokenException : Exception
             8 => TokenError.Full,
             9 => TokenError.Backoff,
             10 => TokenError.Flash,
+            12 => TokenError.NoOtp,
+            13 => TokenError.BadTime,
+            -10 => TokenError.Version,
             -1 => TokenError.Disconnected,
             -2 or -3 => TokenError.SessionLost,
             -4 => TokenError.NotPaired,
@@ -93,6 +99,9 @@ public sealed class TokenException : Exception
         TokenError.BadArgs => "Токен отклонил данные: слишком длинные поля?",
         TokenError.Flash => "Ошибка записи во flash токена.",
         TokenError.IdentityFile => "Не удалось прочитать или сохранить ключ этого компьютера.",
+        TokenError.NoOtp => "У этой записи нет одноразовых кодов.",
+        TokenError.BadTime => "Часы компьютера ушли вперёд относительно токена. Проверьте время или переподключите токен.",
+        TokenError.Version => "Прошивка токена и программа разных версий. Обновите HapasVault или прошивку.",
         _ => code != 0 ? $"Ошибка токена ({code})." : "Неизвестная ошибка.",
     };
 }

@@ -1,5 +1,9 @@
 using System.Runtime.InteropServices;
 
+// pmapi ищется только рядом с программой (и системные DLL — в System32):
+// подложенная в текущий каталог или PATH библиотека не загрузится.
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.AssemblyDirectory | DllImportSearchPath.System32)]
+
 namespace HapasVault.Core;
 
 /// <summary>P/Invoke к pmapi (client/pmapi.h). Все вызовы блокирующие.</summary>
@@ -41,12 +45,20 @@ internal static unsafe partial class Native
     [LibraryImport(Lib)] internal static partial int pmapi_lock(nint h);
 
     [LibraryImport(Lib)]
-    internal static partial int pmapi_list(nint h, delegate* unmanaged<nint, uint, byte*, byte*, void> cb, nint ctx);
+    internal static partial int pmapi_list(nint h, delegate* unmanaged<nint, uint, byte*, byte*, byte, void> cb, nint ctx);
     [LibraryImport(Lib)]
     internal static partial int pmapi_get(nint h, uint id, byte* login, nuint loginCap, byte* password, nuint pwCap);
     [LibraryImport(Lib)]
     internal static partial int pmapi_add(nint h, byte* category, byte* name, byte* login, byte* password, out uint id);
     [LibraryImport(Lib)] internal static partial int pmapi_delete(nint h, uint id);
+    [LibraryImport(Lib)]
+    internal static partial int pmapi_add_otp(nint h, byte* category, byte* name, byte* login, byte* password,
+                                              byte* otp, nuint otpLen, out uint id);
+    [LibraryImport(Lib)]
+    internal static partial int pmapi_update(nint h, uint id, byte* category, byte* name, byte* login, byte* password,
+                                             int otpMode, byte* otp, nuint otpLen);
+    [LibraryImport(Lib)]
+    internal static partial int pmapi_otp(nint h, uint id, ulong unixTime, byte* code, nuint cap, out byte type, out byte period);
     [LibraryImport(Lib)]
     internal static partial int pmapi_log(nint h, delegate* unmanaged<nint, uint, byte, byte, uint, void> cb, nint ctx);
     [LibraryImport(Lib)] internal static partial int pmapi_backup(nint h, byte* output, nuint cap, out nuint len);

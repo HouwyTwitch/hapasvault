@@ -42,6 +42,14 @@
           <TextBlock Text="{Binding Initial}" FontSize="18" FontWeight="SemiBold" Foreground="{Binding OnFillKey, Converter={StaticResource Resource}}" />
         </c:MorphShape>
         <c:Icon DockPanel.Dock="Right" Data="{StaticResource Icon.ArrowForward}" Width="20" Height="20" Opacity="0.6" />
+        <Border DockPanel.Dock="Right" CornerRadius="8" Padding="8,2" Margin="0,0,12,0" VerticalAlignment="Center"
+                Background="{DynamicResource TertiaryContainer}" Visibility="{Binding HasOtp, Converter={StaticResource VisibleWhen}}"
+                ToolTip="Есть одноразовые коды">
+          <StackPanel Orientation="Horizontal">
+            <c:Icon Data="{StaticResource Icon.ShieldLock}" Width="14" Height="14" Foreground="{DynamicResource OnTertiaryContainer}" Margin="0,0,4,0" />
+            <TextBlock Style="{StaticResource Label.Small}" Foreground="{DynamicResource OnTertiaryContainer}" Text="2FA" />
+          </StackPanel>
+        </Border>
         <StackPanel VerticalAlignment="Center" Margin="16,0">
           <TextBlock Style="{StaticResource Title.Medium}" Text="{Binding Name}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
           <TextBlock Style="{StaticResource Body.Medium}" Text="{Binding CategoryOrDefault}" Opacity="0.72" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
@@ -192,6 +200,38 @@
           </Border>
           <c:WavyProgress Margin="12,12,12,0" IsIndeterminate="True" Foreground="{DynamicResource Primary}" Track="{DynamicResource SecondaryContainer}"
                           Visibility="{Binding IsLoading, Converter={StaticResource VisibleWhen}}" />
+
+          <!-- одноразовый код -->
+          <Border Margin="0,12,0,0" CornerRadius="24" Background="{DynamicResource TertiaryContainer}" Padding="20,12,8,14"
+                  Visibility="{Binding Entry.HasOtp, Converter={StaticResource VisibleWhen}}">
+            <StackPanel>
+              <DockPanel>
+                <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Foreground="{DynamicResource OnTertiaryContainer}"
+                        c:A.Icon="{StaticResource Icon.ContentCopy}" Command="{Binding CopyOtpCommand}" ToolTip="Копировать код" />
+                <Button DockPanel.Dock="Right" Foreground="{DynamicResource OnTertiaryContainer}" Command="{Binding ShowOtpCommand}" ToolTip="Показать или скрыть код">
+                  <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource IconButton}">
+                      <Setter Property="c:A.Icon" Value="{StaticResource Icon.Visibility}" />
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsOtpShown}" Value="True">
+                          <Setter Property="c:A.Icon" Value="{StaticResource Icon.VisibilityOff}" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </Button.Style>
+                </Button>
+                <StackPanel VerticalAlignment="Center">
+                  <TextBlock Style="{StaticResource Body.Small}" Foreground="{DynamicResource OnTertiaryContainer}" Opacity="0.8">
+                    <Run Text="{Binding OtpTitle, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding OtpLeft, Mode=OneWay}" />
+                  </TextBlock>
+                  <TextBlock FontFamily="{StaticResource Font.Mono}" FontSize="30" FontWeight="SemiBold" Foreground="{DynamicResource OnTertiaryContainer}"
+                             Text="{Binding OtpText}" />
+                </StackPanel>
+              </DockPanel>
+              <c:WavyProgress Margin="0,8,12,0" Value="{Binding OtpProgress}" Foreground="{DynamicResource Tertiary}" Track="{DynamicResource SurfaceContainerHighest}"
+                              Visibility="{Binding IsOtpShown, Converter={StaticResource VisibleWhen}}" />
+            </StackPanel>
+          </Border>
           <DockPanel Margin="4,16,4,0">
             <c:Icon DockPanel.Dock="Left" Data="{StaticResource Icon.ShieldLock}" Width="18" Height="18" Margin="0,0,10,0" VerticalAlignment="Top"
                     Foreground="{DynamicResource OnSurfaceVariant}" />
@@ -437,6 +477,15 @@
             <StackPanel VerticalAlignment="Center">
               <TextBlock Style="{StaticResource SettingTitle}" Text="Блокировать вместе с Windows" />
               <TextBlock Style="{StaticResource SettingHint}" Text="Win+L, смена пользователя, переход в сон" />
+            </StackPanel>
+          </DockPanel>
+        </Border>
+        <Border Style="{StaticResource SettingRow}">
+          <DockPanel>
+            <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Switch}" IsChecked="{Binding HideFromCapture}" VerticalAlignment="Center" />
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock Style="{StaticResource SettingTitle}" Text="Скрывать окна от записи экрана" />
+              <TextBlock Style="{StaticResource SettingHint}" Text="Скриншоты, запись и демонстрация экрана видят вместо HapasVault пустое место" />
             </StackPanel>
           </DockPanel>
         </Border>

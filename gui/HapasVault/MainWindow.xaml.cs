@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     {
         if (Shell is not { } s) return;
         Win32.StyleWindow(this, s.Theme.IsDark, s.Theme.Target("Surface"));
+        Win32.ExcludeFromCapture(this, s.Settings.HideFromCapture);
     }
 
     private void OnStateChanged()

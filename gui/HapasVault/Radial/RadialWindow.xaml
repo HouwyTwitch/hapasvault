@@ -45,7 +45,7 @@
       <StackPanel>
         <TextBlock x:Name="TargetText" Style="{StaticResource Label.Large}" TextAlignment="Center" Foreground="{DynamicResource InversePrimary}" />
         <TextBlock Style="{StaticResource Body.Small}" TextAlignment="Center" Margin="0,2,0,0" Foreground="{DynamicResource InverseOnSurface}"
-                   Text="ЛКМ — логин и пароль · ПКМ — только пароль · Shift+ЛКМ — только логин · печатайте для поиска · Esc — закрыть" />
+                   Text="ЛКМ — логин и пароль · ПКМ — пароль · Shift+ЛКМ — логин · СКМ или Ctrl+ЛКМ — код 2FA · печатайте для поиска · Esc — закрыть" />
       </StackPanel>
     </Border>
   </Grid>

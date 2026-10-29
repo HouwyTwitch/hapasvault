@@ -5,7 +5,9 @@
 #  include <wincrypt.h>
 #else
 #  define _POSIX_C_SOURCE 200809L
+#  include <fcntl.h>
 #  include <sys/stat.h>
+#  include <unistd.h>
 #endif
 
 #include "pmclient.h"
@@ -42,6 +44,63 @@ void pmc_init(pm_client *c, pmc_xfer_fn xfer, void *ctx)
 
 void pmc_wipe(pm_client *c) { crypto_wipe(c, sizeof *c); }
 
+/* ---------------- файлы ----------------
+ * Пути приходят в UTF-8 (из GUI). На Windows fopen понимает их как ANSI и
+ * не откроет профиль с кириллицей в имени пользователя — нужны W-функции.
+ */
+#ifdef _WIN32
+static int widen(const char *utf8, wchar_t *out, int cap)
+{
+    return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, out, cap) > 0;
+}
+#endif
+
+static FILE *open_utf8(const char *path, const char *mode)
+{
+#ifdef _WIN32
+    wchar_t wp[MAX_PATH * 2], wm[8];
+    if (!widen(path, wp, MAX_PATH * 2) || !widen(mode, wm, 8)) return NULL;
+    return _wfopen(wp, wm);
+#else
+    return fopen(path, mode);
+#endif
+}
+
+/* Запись через временный файл и переименование: сбой посреди записи не
+ * портит единственную копию ключа ПК. На POSIX файл сразу создаётся 0600. */
+static int write_atomic(const char *path, const uint8_t *data, size_t len)
+{
+    char tmp[1024];
+    if (strlen(path) + 5 > sizeof tmp) return PMC_E_FILE;
+    strcpy(tmp, path);
+    strcat(tmp, ".tmp");
+#ifdef _WIN32
+    wchar_t wtmp[MAX_PATH * 2], wpath[MAX_PATH * 2];
+    if (!widen(tmp, wtmp, MAX_PATH * 2) || !widen(path, wpath, MAX_PATH * 2)) return PMC_E_FILE;
+    HANDLE hf = CreateFileW(wtmp, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hf == INVALID_HANDLE_VALUE) return PMC_E_FILE;
+    DWORD wr = 0;
+    BOOL ok = WriteFile(hf, data, (DWORD)len, &wr, NULL) && wr == len && FlushFileBuffers(hf);
+    CloseHandle(hf);
+    if (!ok || !MoveFileExW(wtmp, wpath, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(wtmp);
+        return PMC_E_FILE;
+    }
+    return 0;
+#else
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return PMC_E_FILE;
+    size_t off = 0;
+    while (off < len) {
+        ssize_t k = write(fd, data + off, len - off);
+        if (k <= 0) { close(fd); unlink(tmp); return PMC_E_FILE; }
+        off += (size_t)k;
+    }
+    if (fsync(fd) != 0 || close(fd) != 0 || rename(tmp, path) != 0) { unlink(tmp); return PMC_E_FILE; }
+    return 0;
+#endif
+}
+
 /* ---------------- файл идентичности ----------------
  * [4 "PMID"][1 ver][1 flags][sk 32][token_pk 32][k_pc 32]
  * Windows: содержимое шифруется DPAPI (привязка к учётной записи Windows).
@@ -69,14 +128,9 @@ int pmc_identity_save(const pm_client *c, const char *path)
     data = out.pbData;
     data_len = out.cbData;
 #endif
-    int rc = 0;
-    FILE *f = fopen(path, "wb");
-    if (!f || fwrite(data, 1, data_len, f) != data_len) rc = PMC_E_FILE;
-    if (f) fclose(f);
+    int rc = write_atomic(path, data, data_len);
 #ifdef _WIN32
     LocalFree(out.pbData);
-#else
-    chmod(path, 0600);
 #endif
     crypto_wipe(b, sizeof b);
     return rc;
@@ -85,7 +139,7 @@ int pmc_identity_save(const pm_client *c, const char *path)
 int pmc_identity_load(pm_client *c, const char *path)
 {
     uint8_t raw[1024];
-    FILE *f = fopen(path, "rb");
+    FILE *f = open_utf8(path, "rb");
     if (!f) return PMC_E_FILE;
     size_t n = fread(raw, 1, sizeof raw, f);
     fclose(f);

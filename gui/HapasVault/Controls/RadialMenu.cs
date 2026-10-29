@@ -7,14 +7,15 @@ using HapasVault.Motion;
 
 namespace HapasVault.Controls;
 
-public sealed record RadialEntry(uint Id, string Name, string Category, ShapeKind Shape, Brush Fill, Brush OnFill)
+public sealed record RadialEntry(uint Id, string Name, string Category, ShapeKind Shape, Brush Fill, Brush OnFill,
+                                 HapasVault.Core.OtpKind Otp = HapasVault.Core.OtpKind.None)
 {
     public string Initial => Name.Trim().Length > 0 ? char.ToUpper(Name.Trim()[0]).ToString() : "?";
 }
 
 public sealed record RadialCategory(string Title, IReadOnlyList<RadialEntry> Entries);
 
-public enum AutoTypeMode { LoginPassword, PasswordOnly, LoginOnly }
+public enum AutoTypeMode { LoginPassword, PasswordOnly, LoginOnly, Otp }
 
 /// <summary>
 /// Радиальное меню. Выбор — по направлению от центра, а не попаданием в сектор:
@@ -23,7 +24,8 @@ public enum AutoTypeMode { LoginPassword, PasswordOnly, LoginOnly }
 ///   • больше — внутреннее кольцо категорий, а записи категории, в сторону которой
 ///     указывает мышь, раскрываются веером во внешнем кольце;
 ///   • набранный текст (Filter) — одно кольцо с найденными записями.
-/// ЛКМ / Enter — логин ⇥ пароль, ПКМ — только пароль, Shift+ЛКМ — только логин.
+/// ЛКМ / Enter — логин ⇥ пароль, ПКМ — только пароль, Shift+ЛКМ — только логин,
+/// СКМ / Ctrl+ЛКМ — одноразовый код (если у записи есть 2FA).
 /// </summary>
 public sealed class RadialMenu : FrameworkElement
 {
@@ -224,11 +226,17 @@ public sealed class RadialMenu : FrameworkElement
     protected override void OnMouseUp(MouseButtonEventArgs e)
     {
         base.OnMouseUp(e);
-        if (e.ChangedButton == MouseButton.Left)
-            Commit(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? AutoTypeMode.LoginOnly : AutoTypeMode.LoginPassword);
-        else if (e.ChangedButton == MouseButton.Right)
-            Commit(AutoTypeMode.PasswordOnly);
+        Commit(ModeFor(e.ChangedButton));
     }
+
+    public static AutoTypeMode ModeFor(MouseButton button) => button switch
+    {
+        MouseButton.Right => AutoTypeMode.PasswordOnly,
+        MouseButton.Middle => AutoTypeMode.Otp,
+        _ when Keyboard.Modifiers.HasFlag(ModifierKeys.Control) => AutoTypeMode.Otp,
+        _ when Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) => AutoTypeMode.LoginOnly,
+        _ => AutoTypeMode.LoginPassword,
+    };
 
     public RadialEntry? Hovered
     {
@@ -248,7 +256,9 @@ public sealed class RadialMenu : FrameworkElement
 
     public void Commit(AutoTypeMode mode)
     {
-        if (Hovered is { } entry) Chosen?.Invoke(entry, mode);
+        if (Hovered is not { } entry) return;
+        if (mode == AutoTypeMode.Otp && entry.Otp == HapasVault.Core.OtpKind.None) return;   // кода нет — нечего вводить
+        Chosen?.Invoke(entry, mode);
     }
 
     // ---------------- анимация ----------------
@@ -413,6 +423,8 @@ public sealed class RadialMenu : FrameworkElement
             dc.DrawGeometry(e.Fill, null, Shapes.Geometry(e.Shape, ShapeKind.Sunny, h, 20 * h, avatar));
             var ini = Text(e.Initial, 13 + 2 * h, FontWeights.SemiBold, e.OnFill, av);
             DrawCentered(dc, ini, new Point(avatar.X + av / 2, avatar.Y + av / 2));
+            if (e.Otp != HapasVault.Core.OtpKind.None)   // метка 2FA
+                dc.DrawEllipse(Res("Tertiary"), new Pen(fill, 2), new Point(avatar.Right - 3, avatar.Top + 3), 5, 5);
             if (arc > 24)
                 DrawCentered(dc, Text(e.Name, 12, h > 0.5 ? FontWeights.SemiBold : FontWeights.Medium,
                     Mix("OnSurface", "OnPrimaryContainer", h), arc), new Point(p.X, p.Y + av / 2 + 2));
@@ -433,7 +445,8 @@ public sealed class RadialMenu : FrameworkElement
         else if (hovered != null)
         {
             title = hovered.Name;
-            sub = hovered.Category.Length > 0 ? hovered.Category : "ЛКМ — ввести";
+            sub = hovered.Otp != HapasVault.Core.OtpKind.None ? "СКМ — код 2FA"
+                : hovered.Category.Length > 0 ? hovered.Category : "ЛКМ — ввести";
         }
         else if (_twoRings && _hoverCat >= 0)
         {

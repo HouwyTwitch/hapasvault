@@ -21,10 +21,7 @@ public partial class RadialWindow : Window
         MouseUp += (_, e) =>
         {
             if (!Menu.IsVisible || Menu.IsMouseOver) return;
-            if (e.ChangedButton == MouseButton.Left)
-                Menu.Commit(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? AutoTypeMode.LoginOnly : AutoTypeMode.LoginPassword);
-            else if (e.ChangedButton == MouseButton.Right)
-                Menu.Commit(AutoTypeMode.PasswordOnly);
+            Menu.Commit(RadialMenu.ModeFor(e.ChangedButton));
         };
         Deactivated += (_, _) => { if (!IsBusy) Cancelled?.Invoke(); };
     }

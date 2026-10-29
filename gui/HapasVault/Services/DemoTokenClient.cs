@@ -19,6 +19,7 @@ public sealed class DemoTokenClient : ITokenClient
     ];
 
     private readonly Dictionary<uint, (string Cat, string Name, string Login, string Pw)> _items = new();
+    private readonly Dictionary<uint, OtpSecret> _otp = new();
     private readonly List<LogRecord> _log = new();
     private readonly DateTime _boot = DateTime.UtcNow.AddMinutes(-47);
     private uint _next = 1;
@@ -33,6 +34,7 @@ public sealed class DemoTokenClient : ITokenClient
         Seed("Почта", "Яндекс Почта", "ivan.petrov@yandex.ru");
         Seed("Почта", "Gmail", "ivan.petrov@gmail.com");
         Seed("Работа", "GitLab", "ipetrov");
+        _otp[_next - 1] = new OtpSecret(OtpKind.Totp, "demo-gitlab-totp-secret"u8.ToArray());
         Seed("Работа", "VPN офиса", "petrov");
         Seed("Работа", "Jira", "ipetrov@corp.example");
         Seed("Банки", "Сбербанк Онлайн", "ivan_p");
@@ -41,6 +43,7 @@ public sealed class DemoTokenClient : ITokenClient
         Seed("Соцсети", "ВКонтакте", "ivan.petrov");
         Seed("", "Wi-Fi дома", "HomeNet-5G");
         Seed("Игры", "Steam", "ivan_gamer");
+        _otp[_next - 1] = new OtpSecret(OtpKind.Steam, "demo-steam-shared-key"u8.ToArray());
         AddLog(0x30, 0, 0, 2500);
         AddLog(0x41, 0, 3, 1900);
         AddLog(0x42, 0, 11, 1300);
@@ -125,7 +128,8 @@ public sealed class DemoTokenClient : ITokenClient
     {
         await Delay(80);
         RequireOpen();
-        return _items.Select(kv => new VaultItem(kv.Key, kv.Value.Cat, kv.Value.Name)).ToList();
+        return _items.Select(kv => new VaultItem(kv.Key, kv.Value.Cat, kv.Value.Name,
+            _otp.TryGetValue(kv.Key, out var o) ? o.Kind : OtpKind.None)).ToList();
     }
 
     public async Task<Credential> GetAsync(uint id)
@@ -138,7 +142,7 @@ public sealed class DemoTokenClient : ITokenClient
         return new Credential(it.Login, it.Pw);
     }
 
-    public async Task<uint> AddAsync(string category, string name, string login, string password)
+    public async Task<uint> AddAsync(string category, string name, string login, string password, OtpSecret? otp = null)
     {
         if (TokenClient.Validate(category, name, login, password) is { } err)
             throw new TokenException(TokenError.BadArgs, err);
@@ -146,8 +150,35 @@ public sealed class DemoTokenClient : ITokenClient
         RequireOpen();
         uint id = _next++;
         _items[id] = (category, name, login, password);
+        if (otp != null) _otp[id] = otp;
         AddLog(0x42, 0, id);
         return id;
+    }
+
+    public async Task UpdateAsync(uint id, string category, string name, string login, string password, OtpChange otp, OtpSecret? secret = null)
+    {
+        if (TokenClient.Validate(category, name, login, password) is { } err)
+            throw new TokenException(TokenError.BadArgs, err);
+        await Delay(200);
+        RequireOpen();
+        if (!_items.ContainsKey(id))
+            throw new TokenException(6, TokenError.NotFound, TokenException.Describe(TokenError.NotFound));
+        _items[id] = (category, name, login, password);
+        if (otp == OtpChange.Remove) _otp.Remove(id);
+        else if (otp == OtpChange.Set && secret != null) _otp[id] = secret;
+        AddLog(0x44, 0, id);
+    }
+
+    public async Task<OtpCode> GetOtpAsync(uint id, DateTimeOffset? at = null)
+    {
+        await Delay(60);
+        RequireOpen();
+        if (!_otp.TryGetValue(id, out var o))
+            throw new TokenException(12, TokenError.NoOtp, TokenException.Describe(TokenError.NoOtp));
+        var when = at ?? DateTimeOffset.UtcNow;
+        AddLog(0x45, 0, id);
+        long next = (when.ToUnixTimeSeconds() / o.Period + 1) * o.Period;
+        return new OtpCode(o.Code(when), o.Kind, o.Period, DateTimeOffset.FromUnixTimeSeconds(next));
     }
 
     public async Task DeleteAsync(uint id)
@@ -155,6 +186,7 @@ public sealed class DemoTokenClient : ITokenClient
         await Delay(150);
         RequireOpen();
         _items.Remove(id);
+        _otp.Remove(id);
         AddLog(0x43, 0, id);
     }
 

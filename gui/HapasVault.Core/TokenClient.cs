@@ -6,7 +6,7 @@ namespace HapasVault.Core;
 
 public sealed record TokenInfo(bool Paired, bool SetupDone, bool Unlocked, uint Protocol, uint Count, uint UptimeSeconds);
 
-public sealed record VaultItem(uint Id, string Category, string Name);
+public sealed record VaultItem(uint Id, string Category, string Name, OtpKind Otp = OtpKind.None);
 
 public sealed record Credential(string Login, string Password);
 
@@ -133,10 +133,10 @@ public sealed unsafe partial class TokenClient : ITokenClient
     });
 
     [UnmanagedCallersOnly]
-    private static void OnItem(nint ctx, uint id, byte* category, byte* name)
+    private static void OnItem(nint ctx, uint id, byte* category, byte* name, byte otp)
     {
         var items = (List<VaultItem>)GCHandle.FromIntPtr(ctx).Target!;
-        items.Add(new VaultItem(id, Native.Utf8(category), Native.Utf8(name)));
+        items.Add(new VaultItem(id, Native.Utf8(category), Native.Utf8(name), otp <= 2 ? (OtpKind)otp : OtpKind.None));
     }
 
     public Task<Credential> GetAsync(uint id) => Run(h =>
@@ -167,20 +167,72 @@ public sealed unsafe partial class TokenClient : ITokenClient
         return null;
     }
 
-    public Task<uint> AddAsync(string category, string name, string login, string password)
+    public Task<uint> AddAsync(string category, string name, string login, string password, OtpSecret? otp = null)
     {
         if (Validate(category, name, login, password) is { } err)
             throw new TokenException(TokenError.BadArgs, err);
+        byte[] blob = otp?.ToBlob() ?? [];
         return Run(h =>
         {
             using var c = new Utf8Secret(category);
             using var n = new Utf8Secret(name);
             using var l = new Utf8Secret(login);
             using var p = new Utf8Secret(password);
-            Check(Native.pmapi_add(h, c.Pointer, n.Pointer, l.Pointer, p.Pointer, out uint id));
-            return id;
+            try
+            {
+                fixed (byte* o = blob)
+                {
+                    Check(Native.pmapi_add_otp(h, c.Pointer, n.Pointer, l.Pointer, p.Pointer, o, (nuint)blob.Length, out uint id));
+                    return id;
+                }
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(blob);
+            }
         });
     }
+
+    public Task UpdateAsync(uint id, string category, string name, string login, string password, OtpChange otp, OtpSecret? secret = null)
+    {
+        if (Validate(category, name, login, password) is { } err)
+            throw new TokenException(TokenError.BadArgs, err);
+        if (otp == OtpChange.Set && secret == null) throw new ArgumentNullException(nameof(secret));
+        byte[] blob = otp == OtpChange.Set ? secret!.ToBlob() : [];
+        return Call(h =>
+        {
+            using var c = new Utf8Secret(category);
+            using var n = new Utf8Secret(name);
+            using var l = new Utf8Secret(login);
+            using var p = new Utf8Secret(password);
+            try
+            {
+                fixed (byte* o = blob)
+                    return Native.pmapi_update(h, id, c.Pointer, n.Pointer, l.Pointer, p.Pointer, (int)otp, o, (nuint)blob.Length);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(blob);
+            }
+        });
+    }
+
+    public Task<OtpCode> GetOtpAsync(uint id, DateTimeOffset? at = null) => Run(h =>
+    {
+        var when = at ?? DateTimeOffset.UtcNow;
+        byte* code = stackalloc byte[16];
+        try
+        {
+            Check(Native.pmapi_otp(h, id, (ulong)when.ToUnixTimeSeconds(), code, 16, out byte type, out byte period));
+            int p = Math.Max(1, (int)period);
+            long next = (when.ToUnixTimeSeconds() / p + 1) * p;
+            return new OtpCode(Native.Utf8(code), (OtpKind)type, p, DateTimeOffset.FromUnixTimeSeconds(next));
+        }
+        finally
+        {
+            new Span<byte>(code, 16).Clear();
+        }
+    });
 
     public Task DeleteAsync(uint id) => Call(h => Native.pmapi_delete(h, id));
 

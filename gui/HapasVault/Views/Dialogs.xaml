@@ -109,6 +109,36 @@
         </StackPanel>
       </Border>
 
+      <!-- двухфакторные коды -->
+      <Border CornerRadius="24" Padding="20,14,20,16" Margin="0,12,0,0" Background="{DynamicResource SurfaceContainer}">
+        <StackPanel>
+          <DockPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <RadioButton Style="{StaticResource Connected}" Height="36" Padding="14,0" c:A.Position="First" Content="Нет"
+                           IsChecked="{Binding OtpChoice, Converter={StaticResource Equals}, ConverterParameter=None}" />
+              <RadioButton Style="{StaticResource Connected}" Height="36" Padding="14,0" c:A.Position="Middle" Content="TOTP"
+                           IsChecked="{Binding OtpChoice, Converter={StaticResource Equals}, ConverterParameter=Totp}" />
+              <RadioButton Style="{StaticResource Connected}" Height="36" Padding="14,0" c:A.Position="Last" Content="Steam" Margin="0"
+                           IsChecked="{Binding OtpChoice, Converter={StaticResource Equals}, ConverterParameter=Steam}" />
+            </StackPanel>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock Style="{StaticResource Title.Small}" Text="Двухфакторный код" />
+              <TextBlock Style="{StaticResource Body.Small}" Foreground="{DynamicResource OnSurfaceVariant}" Text="Секрет хранит и коды считает токен" />
+            </StackPanel>
+          </DockPanel>
+          <StackPanel Visibility="{Binding OtpVisible, Converter={StaticResource VisibleWhen}}" Margin="0,12,0,0">
+            <TextBox Style="{StaticResource TextField.Mono}" c:A.Label="Секрет или ссылка otpauth://" c:A.Icon="{StaticResource Icon.Key}"
+                     c:A.Supporting="{Binding OtpHint}" c:A.Error="{Binding OtpError}"
+                     Text="{Binding OtpInput, UpdateSourceTrigger=PropertyChanged}" />
+            <DockPanel Margin="12,6,0,0" Visibility="{Binding OtpStatus, Converter={StaticResource VisibleWhen}}">
+              <c:Icon DockPanel.Dock="Left" Data="{StaticResource Icon.CheckCircle}" Width="18" Height="18" Margin="0,0,8,0"
+                      Foreground="{DynamicResource Primary}" />
+              <TextBlock Style="{StaticResource Body.Small}" VerticalAlignment="Center" Foreground="{DynamicResource Primary}" Text="{Binding OtpStatus}" />
+            </DockPanel>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
       <TextBlock Style="{StaticResource Body.Medium}" Margin="4,12,0,0" Foreground="{DynamicResource Error}" Text="{Binding Error}"
                  Visibility="{Binding Error, Converter={StaticResource VisibleWhen}}" />
       <DockPanel Margin="0,24,0,0">

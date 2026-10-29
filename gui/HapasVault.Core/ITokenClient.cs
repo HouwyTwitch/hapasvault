@@ -23,8 +23,12 @@ public interface ITokenClient : IDisposable
 
     Task<IReadOnlyList<VaultItem>> ListAsync();
     Task<Credential> GetAsync(uint id);
-    Task<uint> AddAsync(string category, string name, string login, string password);
+    Task<uint> AddAsync(string category, string name, string login, string password, OtpSecret? otp = null);
+    /// <summary>Изменить запись на месте (id сохраняется).</summary>
+    Task UpdateAsync(uint id, string category, string name, string login, string password, OtpChange otp, OtpSecret? secret = null);
     Task DeleteAsync(uint id);
+    /// <summary>Одноразовый код: считает токен по времени ПК.</summary>
+    Task<OtpCode> GetOtpAsync(uint id, DateTimeOffset? at = null);
     Task<IReadOnlyList<LogRecord>> GetLogAsync();
     Task<byte[]> BackupAsync();
     Task FactoryResetAsync();
