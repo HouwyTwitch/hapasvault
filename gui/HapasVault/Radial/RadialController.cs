@@ -57,8 +57,7 @@ public sealed class RadialController
     {
         _window ??= Create();
         _window.SetTarget(_target != 0 ? $"Ввод в «{Trim(AutoType.WindowTitle(_target))}»" : "Пароль будет скопирован в буфер обмена");
-        double dpi = Application.Current.MainWindow is { } mw ? VisualTreeHelper.GetDpi(mw).DpiScaleX : 1;
-        _window.ShowOn(_cursor.X, _cursor.Y, dpi);
+        _window.ShowOn(_cursor.X, _cursor.Y);
         // курсор в центр меню: выбор идёт по направлению от центра
         _window.Dispatcher.BeginInvoke(() =>
         {
@@ -74,7 +73,7 @@ public sealed class RadialController
         _target = 0;
         _cursor = AutoType.CursorPosition();
         _window ??= Create();
-        _window.ShowOn(_cursor.X, _cursor.Y, 1);
+        _window.ShowOn(_cursor.X, _cursor.Y);
         _window.SetTarget(target);
         _window.ShowMenu(items);
         return _window;

@@ -267,3 +267,59 @@ public static partial class AutoType
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool SetCursorPos(int x, int y);
 }
+
+/// <summary>Мониторы: границы монитора под точкой и размещение окна в пикселях.</summary>
+public static partial class Monitors
+{
+    public readonly record struct PixelRect(int Left, int Top, int Width, int Height);
+
+    public static PixelRect BoundsAt(int x, int y)
+    {
+        nint mon = MonitorFromPoint(new POINT { X = x, Y = y }, MONITOR_DEFAULTTONEAREST);
+        var mi = new MONITORINFO { Size = (uint)Marshal.SizeOf<MONITORINFO>() };
+        if (mon == 0 || !GetMonitorInfoW(mon, ref mi))
+            return new PixelRect(0, 0, GetSystemMetrics(0), GetSystemMetrics(1));   // основной экран
+        var r = mi.Monitor;
+        return new PixelRect(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
+    }
+
+    public static void Place(nint hwnd, PixelRect r) =>
+        SetWindowPos(hwnd, HWND_TOPMOST, r.Left, r.Top, r.Width, r.Height, SWP_SHOWWINDOW);
+
+    private const uint MONITOR_DEFAULTTONEAREST = 2, SWP_SHOWWINDOW = 0x40;
+    private static readonly nint HWND_TOPMOST = -1;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        public int X, Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO
+    {
+        public uint Size;
+        public RECT Monitor, Work;
+        public uint Flags;
+    }
+
+    [LibraryImport("user32.dll")]
+    private static partial nint MonitorFromPoint(POINT pt, uint flags);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetMonitorInfoW(nint monitor, ref MONITORINFO info);
+
+    [LibraryImport("user32.dll")]
+    private static partial int GetSystemMetrics(int index);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool SetWindowPos(nint hwnd, nint after, int x, int y, int cx, int cy, uint flags);
+}

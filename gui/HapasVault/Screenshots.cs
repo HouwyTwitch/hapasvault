@@ -174,6 +174,7 @@ internal static class Screenshots
             await Settle();
             var m = overlay.Menu;
             m.Track(new Point(m.ActualWidth / 2 + 150, m.ActualHeight / 2 - 60));
+            CheckFullScreen(overlay);
         }, () => overlay);
 
         await Shot("19-radial-rings", async () =>
@@ -183,8 +184,11 @@ internal static class Screenshots
             string[] names = ["Яндекс", "Gmail", "Outlook", "GitLab", "Jira", "VPN", "Confluence", "Сбербанк", "Тинькофф",
                               "Альфа", "Telegram", "ВКонтакте", "Discord", "Steam", "Epic", "Battle.net", "Proton", "Slack", "Figma", "ВТБ"];
             for (int i = 0; i < names.Length; i++) many.Add(new HapasVault.Core.VaultItem((uint)i + 1, cats[i % cats.Length], names[i]));
+            shell.Radial.Close();   // повторное открытие того же окна тоже должно быть на весь экран
+            await Task.Delay(200);
             overlay = shell.Radial.ShowForTest(Radial.RadialController.Group(many), "Ввод в «Вход — Google Chrome»");
             await Settle();
+            CheckFullScreen(overlay);
             var m = overlay.Menu;
             var c = new Point(m.ActualWidth / 2, m.ActualHeight / 2);
             m.Track(c + new Vector(40, -110));    // категория справа сверху
@@ -231,6 +235,14 @@ internal static class Screenshots
     {
         await Task.Delay(1400);
         await Application.Current.Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+    }
+
+    private static void CheckFullScreen(Window w)
+    {
+        double sw = SystemParameters.PrimaryScreenWidth, sh = SystemParameters.PrimaryScreenHeight;
+        if (Math.Abs(w.ActualWidth - sw) > 2 || Math.Abs(w.ActualHeight - sh) > 2)
+            throw new InvalidOperationException($"оверлей {w.ActualWidth}×{w.ActualHeight}, а экран {sw}×{sh}");
+        Console.WriteLine($"     overlay: {w.ActualWidth}×{w.ActualHeight}");
     }
 
     // главное окно и полупрозрачный оверлей поверх него — как видит пользователь

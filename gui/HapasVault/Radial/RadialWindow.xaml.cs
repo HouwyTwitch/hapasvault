@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
+using HapasVault.Platform;
 using System.Windows.Media.Animation;
 using HapasVault.Controls;
 using HapasVault.Motion;
@@ -70,16 +72,18 @@ public partial class RadialWindow : Window
         StatusText.Text = text;
     }
 
-    /// <summary>Показать на мониторе, где сейчас курсор (координаты курсора — в пикселях экрана).</summary>
-    public void ShowOn(int cursorX, int cursorY, double dpiScale)
+    /// <summary>
+    /// Показать на весь монитор, где сейчас курсор (координаты — в пикселях экрана).
+    /// Границы ставятся через SetWindowPos в пикселях: WPF сам пересчитает их с
+    /// учётом масштаба этого монитора (максимизация прозрачного окна ненадёжна).
+    /// </summary>
+    public void ShowOn(int cursorX, int cursorY)
     {
         WindowState = WindowState.Normal;
-        Left = cursorX / dpiScale - 50;
-        Top = cursorY / dpiScale - 50;
-        Width = 100;
-        Height = 100;
+        var hwnd = new WindowInteropHelper(this).EnsureHandle();
+        var r = Monitors.BoundsAt(cursorX, cursorY);
         Show();
-        WindowState = WindowState.Maximized;   // разворачивается на монитор, где стоит окно
+        Monitors.Place(hwnd, r);
         Activate();
         Scrim.BeginAnimation(OpacityProperty, new DoubleAnimation(0.32, TimeSpan.FromMilliseconds(220))
         { EasingFunction = M3Motion.EmphasizedDecelerate });
