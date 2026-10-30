@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\HapasVault.Core\HapasVault.Core.csproj" />
+  </ItemGroup>
+  <!-- pmapi и симулятор из сборки CMake (PmNativeDir, см. Directory.Build.props) -->
+  <ItemGroup>
+    <None Include="$(PmNativeDir)pmapi.so" Condition="Exists('$(PmNativeDir)pmapi.so')" Link="pmapi.so" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(PmNativeDir)pmapi.dll" Condition="Exists('$(PmNativeDir)pmapi.dll')" Link="pmapi.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(PmNativeDir)Release\pmapi.dll" Condition="Exists('$(PmNativeDir)Release\pmapi.dll')" Link="pmapi.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="HapasVault.Core.Tests.NativeDirAttribute">
+      <_Parameter1>$(PmNativeDir)</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

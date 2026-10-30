@@ -1,0 +1,269 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# Релизы публикуются сами (job release):
+#   push в main      -> релиз v<VERSION>.<номер сборки>, помечается «последним»
+#   push тега v*     -> релиз с этим тегом
+#   push в др. ветку -> предрелиз «dev» (один, перезаписывается последней сборкой)
+# Публикация — только после зелёных тестов на Linux и Windows.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  linux:
+    name: Linux (GCC + ASan/UBSan, .NET)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Configure (sanitizers)
+        run: >
+          cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
+      - name: Build (sanitizers)
+        run: cmake --build build-asan -j
+      - name: Test C core
+        run: ctest --test-dir build-asan --output-on-failure
+      - name: Fuzz token parser (ASan/UBSan, 4 x 200k)
+        run: for s in 1 2 3 4; do ./build-asan/pmfuzz 200000 $s; done
+
+      # pmapi.so для .NET собираем без санитайзеров (ASan нельзя подгрузить в dotnet)
+      - name: Build native for .NET
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+      - name: Test C# core against simulator
+        run: dotnet test gui/HapasVault.Core.Tests -c Release --logger "console;verbosity=normal"
+
+  firmware:
+    name: Firmware (RP2040 + RP2350, emulator)
+    runs-on: ubuntu-latest
+    env:
+      PICO_SDK_VERSION: 2.1.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: ARM toolchain
+        run: sudo apt-get update -q && sudo apt-get install -y -q gcc-arm-none-eabi libnewlib-arm-none-eabi
+
+      - name: Cache pico-sdk
+        uses: actions/cache@v4
+        with:
+          path: ~/pico-sdk
+          key: pico-sdk-${{ env.PICO_SDK_VERSION }}
+
+      - name: pico-sdk
+        run: |
+          if [ ! -d ~/pico-sdk/src ]; then
+            git clone -q --depth 1 -b "$PICO_SDK_VERSION" https://github.com/raspberrypi/pico-sdk ~/pico-sdk
+            git -C ~/pico-sdk submodule update -q --init --depth 1 lib/tinyusb
+          fi
+
+      - name: Build firmware (Pico, Pico 2)
+        run: |
+          for b in pico pico2; do
+            cmake -S firmware -B build-fw-$b -DPICO_SDK_PATH=$HOME/pico-sdk -DPICO_BOARD=$b
+            cmake --build build-fw-$b -j
+            cp build-fw-$b/pmtoken.uf2 pmtoken-$b.uf2
+          done
+          arm-none-eabi-size build-fw-pico/pmtoken.elf build-fw-pico2/pmtoken.elf
+
+      - name: Build pmhwtest
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j --target pmhwtest
+
+      # настоящий ARM-код прошивки и TinyUSB в эмуляторе RP2040; клиент — по тому же протоколу, что по USB
+      - name: Run firmware in RP2040 emulator
+        working-directory: firmware/emu
+        run: |
+          npm ci --no-audit --no-fund
+          node emu.js ../../pmtoken-pico.uf2 47300 > emu.log 2>&1 &
+          for i in $(seq 60); do grep -q "CDC готов" emu.log && break; sleep 1; done
+          rc=0; timeout 900 ../../build/pmhwtest tcp:47300 || rc=$?
+          kill %1 || true
+          cat emu.log
+          exit $rc
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: pmtoken-*.uf2
+
+  windows:
+    name: Windows x64 (MSVC + WPF)
+    runs-on: windows-latest
+    env:
+      SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
+      SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      package: ${{ steps.ver.outputs.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Version
+        id: ver
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") { $v = "${{ github.ref_name }}".TrimStart('v') }
+          else { $v = "$((Get-Content VERSION -Raw).Trim()).${{ github.run_number }}" }
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "bad version: $v" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "package=HapasVault-$v-win64" >> $env:GITHUB_OUTPUT
+
+      - name: Configure
+        # статический CRT (/MT): exe и dll запускаются без VC++ Redistributable
+        run: >
+          cmake -S . -B build -A x64
+          -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
+          -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+      - name: Build native
+        run: cmake --build build --config Release --parallel
+      - name: Test C core
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Test C# core against simulator
+        run: dotnet test gui/HapasVault.Core.Tests -c Release --logger "console;verbosity=normal"
+
+      - name: Publish GUI
+        run: >
+          dotnet publish gui/HapasVault/HapasVault.csproj -c Release -r win-x64 --self-contained
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true -p:DebugType=none -o publish
+          -p:Version=${{ steps.ver.outputs.version }}
+          -p:InformationalVersion=${{ steps.ver.outputs.version }}+${{ github.sha }}
+
+      # Подпись Authenticode — если в Settings → Secrets заданы SIGN_PFX_BASE64 и SIGN_PFX_PASSWORD.
+      # Без сертификата шаг пропускается, SmartScreen будет предупреждать при первом запуске.
+      - name: Sign binaries
+        if: env.SIGN_PFX_BASE64 != ''
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'sign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_PFX_BASE64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
+          try {
+            & $signtool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
+              /f $pfx /p $env:SIGN_PFX_PASSWORD publish/HapasVault.exe publish/pmapi.dll
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed" }
+          } finally { Remove-Item $pfx -Force }
+
+      - name: Render all screens
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath publish/HapasVault.exe -ArgumentList '--screenshots', "$PWD/screenshots" `
+               -PassThru -RedirectStandardOutput screenshots.log -RedirectStandardError screenshots.err
+          if (-not $p.WaitForExit(300000)) { $p.Kill(); throw "screenshots: timeout" }
+          Get-Content screenshots.log, screenshots.err -ErrorAction SilentlyContinue
+          if (Test-Path screenshots/errors.txt) { Get-Content screenshots/errors.txt }
+          $crash = Join-Path $env:APPDATA 'HapasVault/crash.log'
+          if (Test-Path $crash) { Get-Content $crash }
+          if ($p.ExitCode -ne 0) { throw "screenshots: exit code $($p.ExitCode)" }
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: ignore
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "${{ steps.ver.outputs.package }}"
+          $dir = "dist/$name"
+          New-Item -ItemType Directory -Force -Path $dir, "$dir/tools" | Out-Null
+          Copy-Item publish/HapasVault.exe, publish/pmapi.dll $dir
+          Copy-Item build/Release/pmtoken_sim.exe, build/Release/pmcli.exe, build/Release/pmhwtest.exe "$dir/tools"
+          Copy-Item README.md $dir
+          Copy-Item third_party/monocypher/LICENCE.md "$dir/LICENCE-monocypher.md"
+          Copy-Item gui/THIRD_PARTY.md $dir
+          Compress-Archive -Path "$dir/*" -DestinationPath "dist/$name.zip"
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.ver.outputs.package }}
+          path: dist/${{ steps.ver.outputs.package }}/
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-zip
+          path: dist/${{ steps.ver.outputs.package }}.zip
+          retention-days: 3
+
+  release:
+    name: Publish release
+    needs: [linux, windows, firmware]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write       # Sigstore: подпись attestation ключом на OIDC-токене сборки
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.windows.outputs.version }}
+      PACKAGE: ${{ needs.windows.outputs.package }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-zip
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: dist
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum *.zip *.uf2 | tee SHA256SUMS.txt
+
+      # Происхождение сборки (SLSA provenance), подписанное Sigstore: какой репозиторий,
+      # коммит и workflow собрали каждый файл. Проверка: gh attestation verify <файл> -R <repo>
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*.uf2
+
+      - name: Stable release
+        if: github.ref_type == 'tag' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          tag="v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/*.zip dist/*.uf2 dist/SHA256SUMS.txt --clobber
+          else
+            gh release create "$tag" dist/*.zip dist/*.uf2 dist/SHA256SUMS.txt \
+              --target "$GITHUB_SHA" --title "HapasVault $VERSION" --generate-notes --latest
+          fi
+
+      - name: Development pre-release
+        if: github.ref_type == 'branch' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          gh release delete dev --cleanup-tag --yes 2>/dev/null || true
+          gh release create dev dist/*.zip dist/*.uf2 dist/SHA256SUMS.txt --prerelease --target "$GITHUB_SHA" \
+            --title "HapasVault $VERSION (dev, ${GITHUB_REF_NAME})" \
+            --notes "Сборка из ветки \`${GITHUB_REF_NAME}\`, коммит ${GITHUB_SHA::7}. Перезаписывается при каждом push. Стабильные версии — без пометки «Pre-release»."

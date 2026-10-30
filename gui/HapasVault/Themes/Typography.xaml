@@ -1,0 +1,73 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- Roboto / Roboto Mono (OFL), встроены в сборку -->
+  <FontFamily x:Key="Font.Sans">pack://application:,,,/HapasVault;component/Fonts/#Roboto</FontFamily>
+  <FontFamily x:Key="Font.Mono">pack://application:,,,/HapasVault;component/Fonts/#Roboto Mono</FontFamily>
+
+  <Style x:Key="Text" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource Font.Sans}" />
+    <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+
+  <!-- Шкала M3; «Emphasized» — более жирные варианты из набора Expressive -->
+  <Style x:Key="Display.Large" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="57" /><Setter Property="LineHeight" Value="64" />
+  </Style>
+  <Style x:Key="Display.Medium" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="45" /><Setter Property="LineHeight" Value="52" />
+  </Style>
+  <Style x:Key="Display.Small" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="36" /><Setter Property="LineHeight" Value="44" />
+  </Style>
+  <Style x:Key="Display.Emphasized" TargetType="TextBlock" BasedOn="{StaticResource Display.Medium}">
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style x:Key="Headline.Large" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="32" /><Setter Property="LineHeight" Value="40" />
+  </Style>
+  <Style x:Key="Headline.Medium" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="28" /><Setter Property="LineHeight" Value="36" />
+  </Style>
+  <Style x:Key="Headline.Small" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="24" /><Setter Property="LineHeight" Value="32" />
+  </Style>
+  <Style x:Key="Headline.Emphasized" TargetType="TextBlock" BasedOn="{StaticResource Headline.Large}">
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style x:Key="Title.Large" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="22" /><Setter Property="LineHeight" Value="28" />
+  </Style>
+  <Style x:Key="Title.Medium" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="16" /><Setter Property="LineHeight" Value="24" />
+    <Setter Property="FontWeight" Value="Medium" />
+  </Style>
+  <Style x:Key="Title.Small" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="14" /><Setter Property="LineHeight" Value="20" />
+    <Setter Property="FontWeight" Value="Medium" />
+  </Style>
+  <Style x:Key="Body.Large" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="16" /><Setter Property="LineHeight" Value="24" />
+  </Style>
+  <Style x:Key="Body.Medium" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="14" /><Setter Property="LineHeight" Value="20" />
+  </Style>
+  <Style x:Key="Body.Small" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="12" /><Setter Property="LineHeight" Value="16" />
+  </Style>
+  <Style x:Key="Label.Large" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="14" /><Setter Property="LineHeight" Value="20" />
+    <Setter Property="FontWeight" Value="Medium" />
+  </Style>
+  <Style x:Key="Label.Medium" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="12" /><Setter Property="LineHeight" Value="16" />
+    <Setter Property="FontWeight" Value="Medium" />
+  </Style>
+  <Style x:Key="Label.Small" TargetType="TextBlock" BasedOn="{StaticResource Text}">
+    <Setter Property="FontSize" Value="11" /><Setter Property="LineHeight" Value="16" />
+    <Setter Property="FontWeight" Value="Medium" />
+  </Style>
+  <Style x:Key="Mono.Large" TargetType="TextBlock" BasedOn="{StaticResource Body.Large}">
+    <Setter Property="FontFamily" Value="{StaticResource Font.Mono}" />
+  </Style>
+</ResourceDictionary>

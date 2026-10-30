@@ -1,0 +1,10 @@
+build/
+*.bin
+*.bak
+pmclient.id
+build-*/
+bin/
+obj/
+*.user
+.vs/
+TestResults/

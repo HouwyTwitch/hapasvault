@@ -1,0 +1,377 @@
+using System.Runtime.InteropServices;
+using System.Windows.Interop;
+
+namespace HapasVault.Platform;
+
+public enum HotkeyChoice { CtrlAltSpace, CtrlShiftSpace, CtrlAltP }
+
+/// <summary>Глобальное сочетание клавиш через RegisterHotKey (WM_HOTKEY в окно приложения).</summary>
+public sealed partial class GlobalHotkey : IDisposable
+{
+    private const int WM_HOTKEY = 0x0312;
+    private const int Id = 0x4856;   // 'HV'
+    private const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_SHIFT = 0x4, MOD_NOREPEAT = 0x4000;
+    private const uint VK_SPACE = 0x20, VK_P = 0x50;
+
+    private readonly HwndSource _source;
+    private bool _registered;
+
+    public GlobalHotkey(nint hwnd)
+    {
+        _source = HwndSource.FromHwnd(hwnd) ?? throw new InvalidOperationException("нет окна для горячей клавиши");
+        _source.AddHook(Hook);
+    }
+
+    public event EventHandler? Pressed;
+
+    public static string Describe(HotkeyChoice c) => c switch
+    {
+        HotkeyChoice.CtrlShiftSpace => "Ctrl+Shift+Space",
+        HotkeyChoice.CtrlAltP => "Ctrl+Alt+P",
+        _ => "Ctrl+Alt+Space",
+    };
+
+    /// <summary>Зарегистрировать сочетание (null — снять). false — занято другой программой.</summary>
+    public bool Set(HotkeyChoice? choice)
+    {
+        if (_registered) UnregisterHotKey(_source.Handle, Id);
+        _registered = false;
+        if (choice is not { } c) return true;
+        var (mods, vk) = c switch
+        {
+            HotkeyChoice.CtrlShiftSpace => (MOD_CONTROL | MOD_SHIFT, VK_SPACE),
+            HotkeyChoice.CtrlAltP => (MOD_CONTROL | MOD_ALT, VK_P),
+            _ => (MOD_CONTROL | MOD_ALT, VK_SPACE),
+        };
+        _registered = RegisterHotKey(_source.Handle, Id, mods | MOD_NOREPEAT, vk);
+        return _registered;
+    }
+
+    private nint Hook(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
+    {
+        if (msg == WM_HOTKEY && wParam == Id)
+        {
+            handled = true;
+            Pressed?.Invoke(this, EventArgs.Empty);
+        }
+        return 0;
+    }
+
+    public void Dispose()
+    {
+        Set(null);
+        _source.RemoveHook(Hook);
+    }
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool RegisterHotKey(nint hwnd, int id, uint modifiers, uint vk);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool UnregisterHotKey(nint hwnd, int id);
+}
+
+/// <summary>
+/// Автоввод: возврат фокуса в окно, где был пользователь, и набор текста
+/// событиями клавиатуры (KEYEVENTF_UNICODE — не зависит от раскладки).
+/// </summary>
+public static partial class AutoType
+{
+    public static nint ForegroundWindow() => GetForegroundWindow();
+
+    public static bool IsOwnWindow(nint hwnd)
+    {
+        if (hwnd == 0) return true;
+        GetWindowThreadProcessId(hwnd, out uint pid);
+        return pid == (uint)Environment.ProcessId;
+    }
+
+    public static unsafe string WindowTitle(nint hwnd)
+    {
+        char* buf = stackalloc char[256];
+        int n = GetWindowTextW(hwnd, buf, 256);
+        return n > 0 ? new string(buf, 0, n) : "";
+    }
+
+    /// <summary>Вернуть окно на передний план (мы сейчас активны, поэтому Windows разрешит).</summary>
+    public static async Task<bool> FocusAsync(nint hwnd)
+    {
+        if (hwnd == 0 || !IsWindow(hwnd)) return false;
+        if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+        SetForegroundWindow(hwnd);
+        for (int i = 0; i < 20; i++)
+        {
+            if (GetForegroundWindow() == hwnd) return true;
+            await Task.Delay(15);
+        }
+        return GetForegroundWindow() == hwnd;
+    }
+
+    /// <summary>Дождаться, пока пользователь отпустит Ctrl/Alt/Shift/Win, иначе они смешаются с вводом.</summary>
+    public static async Task WaitModifiersReleasedAsync(int timeoutMs = 1500)
+    {
+        int[] keys = [0x10, 0x11, 0x12, 0x5B, 0x5C];   // Shift, Ctrl, Alt, LWin, RWin
+        for (int waited = 0; waited < timeoutMs; waited += 20)
+        {
+            if (keys.All(k => (GetAsyncKeyState(k) & 0x8000) == 0)) return;
+            await Task.Delay(20);
+        }
+    }
+
+    public abstract record Step;
+    public sealed record Text(string Value) : Step;
+    public sealed record Key(ushort VirtualKey) : Step;
+
+    public const ushort VK_TAB = 0x09, VK_RETURN = 0x0D;
+
+    public enum Result { Ok, Rejected, FocusLost }
+
+    /// <summary>
+    /// Набрать последовательность. Если задано окно target, перед каждым символом
+    /// проверяется, что оно всё ещё на переднем плане: перехватившее фокус окно
+    /// (всплывающее, фишинговое) не получит остаток пароля.
+    /// </summary>
+    public static async Task<Result> TypeAsync(IEnumerable<Step> steps, nint target = 0)
+    {
+        bool Still() => target == 0 || GetForegroundWindow() == target;
+        foreach (var step in steps)
+        {
+            if (!Still()) return Result.FocusLost;
+            switch (step)
+            {
+                case Key k:
+                    if (!SendKey(k.VirtualKey)) return Result.Rejected;
+                    break;
+                case Text t:
+                    foreach (char ch in t.Value)
+                    {
+                        if (!Still()) return Result.FocusLost;
+                        bool ok = ch switch
+                        {
+                            '\r' => true,
+                            '\n' => SendKey(VK_RETURN),
+                            '\t' => SendKey(VK_TAB),
+                            _ => SendChar(ch),
+                        };
+                        if (!ok) return Result.Rejected;
+                        await Task.Delay(2);   // некоторые поля теряют слишком быстрый ввод
+                    }
+                    break;
+            }
+            await Task.Delay(30);
+        }
+        return Result.Ok;
+    }
+
+    /// <summary>Процесс окна (0 — наш) запущен с повышенными правами.</summary>
+    public static bool IsElevated(nint hwnd)
+    {
+        uint pid = (uint)Environment.ProcessId;
+        if (hwnd != 0) GetWindowThreadProcessId(hwnd, out pid);
+        nint proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (proc == 0) return hwnd != 0;   // не можем даже спросить — скорее всего, выше нас по правам
+        try
+        {
+            if (!OpenProcessToken(proc, TOKEN_QUERY, out nint token)) return hwnd != 0;
+            try
+            {
+                return GetTokenInformation(token, TokenElevation, out int elevated, sizeof(int), out _) && elevated != 0;
+            }
+            finally
+            {
+                CloseHandle(token);
+            }
+        }
+        finally
+        {
+            CloseHandle(proc);
+        }
+    }
+
+    private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, TOKEN_QUERY = 0x0008;
+    private const int TokenElevation = 20;
+
+    [LibraryImport("kernel32.dll")]
+    private static partial nint OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint pid);
+
+    [LibraryImport("advapi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool OpenProcessToken(nint process, uint access, out nint token);
+
+    [LibraryImport("advapi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetTokenInformation(nint token, int cls, out int info, int len, out int returned);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool CloseHandle(nint handle);
+
+    private static unsafe bool SendChar(char ch)
+    {
+        INPUT* x = stackalloc INPUT[2];
+        x[0] = Keyboard(0, ch, KEYEVENTF_UNICODE);
+        x[1] = Keyboard(0, ch, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
+        return SendInput(2, x, sizeof(INPUT)) == 2;
+    }
+
+    private static unsafe bool SendKey(ushort vk)
+    {
+        INPUT* x = stackalloc INPUT[2];
+        x[0] = Keyboard(vk, 0, 0);
+        x[1] = Keyboard(vk, 0, KEYEVENTF_KEYUP);
+        return SendInput(2, x, sizeof(INPUT)) == 2;
+    }
+
+    private static INPUT Keyboard(ushort vk, ushort scan, uint flags) => new()
+    {
+        Type = INPUT_KEYBOARD,
+        U = new InputUnion { Ki = new KEYBDINPUT { Vk = vk, Scan = scan, Flags = flags } },
+    };
+
+    // ---- курсор: меню появляется под курсором, после закрытия курсор возвращается ----
+    public static (int X, int Y) CursorPosition()
+    {
+        GetCursorPos(out var p);
+        return (p.X, p.Y);
+    }
+
+    public static void SetCursor(int x, int y) => SetCursorPos(x, y);
+
+    private const uint INPUT_KEYBOARD = 1;
+    private const uint KEYEVENTF_KEYUP = 0x2, KEYEVENTF_UNICODE = 0x4;
+    private const int SW_RESTORE = 9;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public ushort Vk;
+        public ushort Scan;
+        public uint Flags;
+        public uint Time;
+        public nint ExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int Dx, Dy;
+        public uint MouseData, Flags, Time;
+        public nint ExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        [FieldOffset(0)] public MOUSEINPUT Mi;
+        [FieldOffset(0)] public KEYBDINPUT Ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public uint Type;
+        public InputUnion U;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        public int X, Y;
+    }
+
+    [LibraryImport("user32.dll")]
+    private static unsafe partial uint SendInput(uint count, INPUT* inputs, int size);
+
+    [LibraryImport("user32.dll")]
+    private static partial nint GetForegroundWindow();
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool SetForegroundWindow(nint hwnd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool IsWindow(nint hwnd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool IsIconic(nint hwnd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool ShowWindow(nint hwnd, int cmd);
+
+    [LibraryImport("user32.dll")]
+    private static partial uint GetWindowThreadProcessId(nint hwnd, out uint pid);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetWindowTextW")]
+    private static unsafe partial int GetWindowTextW(nint hwnd, char* text, int max);
+
+    [LibraryImport("user32.dll")]
+    private static partial short GetAsyncKeyState(int vk);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetCursorPos(out POINT p);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool SetCursorPos(int x, int y);
+}
+
+/// <summary>Мониторы: границы монитора под точкой и размещение окна в пикселях.</summary>
+public static partial class Monitors
+{
+    public readonly record struct PixelRect(int Left, int Top, int Width, int Height);
+
+    public static PixelRect BoundsAt(int x, int y)
+    {
+        nint mon = MonitorFromPoint(new POINT { X = x, Y = y }, MONITOR_DEFAULTTONEAREST);
+        var mi = new MONITORINFO { Size = (uint)Marshal.SizeOf<MONITORINFO>() };
+        if (mon == 0 || !GetMonitorInfoW(mon, ref mi))
+            return new PixelRect(0, 0, GetSystemMetrics(0), GetSystemMetrics(1));   // основной экран
+        var r = mi.Monitor;
+        return new PixelRect(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
+    }
+
+    public static void Place(nint hwnd, PixelRect r) =>
+        SetWindowPos(hwnd, HWND_TOPMOST, r.Left, r.Top, r.Width, r.Height, SWP_SHOWWINDOW);
+
+    private const uint MONITOR_DEFAULTTONEAREST = 2, SWP_SHOWWINDOW = 0x40;
+    private static readonly nint HWND_TOPMOST = -1;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        public int X, Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO
+    {
+        public uint Size;
+        public RECT Monitor, Work;
+        public uint Flags;
+    }
+
+    [LibraryImport("user32.dll")]
+    private static partial nint MonitorFromPoint(POINT pt, uint flags);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetMonitorInfoW(nint monitor, ref MONITORINFO info);
+
+    [LibraryImport("user32.dll")]
+    private static partial int GetSystemMetrics(int index);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool SetWindowPos(nint hwnd, nint after, int x, int y, int cx, int cy, uint flags);
+}

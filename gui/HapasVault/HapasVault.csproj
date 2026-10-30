@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- позволяет собирать (но не запускать) на Linux -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>HapasVault</AssemblyName>
+    <RootNamespace>HapasVault</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- CI подставляет -p:Version=<VERSION>.<номер сборки>; 0.0.0 — локальная сборка -->
+    <Version>0.0.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\HapasVault.Core\HapasVault.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Fonts\*.ttf" />
+    <Resource Include="Assets\app.ico" />
+  </ItemGroup>
+  <!-- pmapi.dll из сборки CMake (MSVC: build\Release, MinGW: build\) -->
+  <ItemGroup>
+    <None Include="$(PmNativeDir)Release\pmapi.dll" Condition="Exists('$(PmNativeDir)Release\pmapi.dll')" Link="pmapi.dll"
+          CopyToOutputDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="$(PmNativeDir)pmapi.dll" Condition="!Exists('$(PmNativeDir)Release\pmapi.dll') And Exists('$(PmNativeDir)pmapi.dll')" Link="pmapi.dll"
+          CopyToOutputDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+</Project>
