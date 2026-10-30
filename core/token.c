@@ -144,24 +144,21 @@ static const uint8_t *v_entry_otp(size_t off)
     return e + 2u + (size_t)(e[0] | e[1] << 8);
 }
 
-/* Перевести открытое хранилище v1 в v2 (добавить пустое поле OTP). 0 = ок. */
+/* Перевести открытое хранилище v1 в v2 (добавить пустое поле OTP). 0 = ок.
+ * На месте, без второго буфера на 32 КБ: RAM RP2040 — 264 КБ. */
 static int v_migrate(void)
 {
     if (v_format() >= 2) return 0;
-    static uint8_t tmp[STORE_PLAIN_MAX];
-    size_t in = VH, out = VH, n = v_count();
-    memcpy(tmp, g_plain, VH);
+    size_t off = VH, len = g_plain_len, n = v_count();
     for (size_t i = 0; i < n; i++) {
-        size_t sz = entry_size(g_plain, g_plain_len, in, 1);
-        if (!sz || out + sz + 1 > STORE_PLAIN_MAX) { crypto_wipe(tmp, sizeof tmp); return -1; }
-        memcpy(tmp + out, g_plain + in, sz);
-        tmp[out + sz] = 0;
-        in += sz;
-        out += sz + 1;
+        size_t sz = entry_size(g_plain, len, off, 1);
+        if (!sz || len + 1 > STORE_PLAIN_MAX) return -1;
+        memmove(g_plain + off + sz + 1, g_plain + off + sz, len - off - sz);
+        g_plain[off + sz] = 0;
+        len++;
+        off += sz + 1;
     }
-    memcpy(g_plain, tmp, out);
-    crypto_wipe(tmp, sizeof tmp);
-    g_plain_len = out;
+    g_plain_len = len;
     v_set_next_id(wire_get32(g_plain + 2));
     return store_vault_save(g_kvault, g_plain, g_plain_len);
 }

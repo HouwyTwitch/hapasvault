@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using HapasVault.Core;
 using HapasVault.Platform;
 using HapasVault.Theming;
 
@@ -26,6 +27,8 @@ public sealed class AppSettings
     public bool ClearClipboard { get; set; } = true;
     public int ClipboardSeconds { get; set; } = 30;
     public ushort Port { get; set; } = 47123;
+    /// <summary>Авто: USB-токен, если подключён, иначе симулятор.</summary>
+    public TokenConnection Connection { get; set; } = TokenConnection.Auto;
     public bool RadialEnabled { get; set; } = true;
     public HotkeyChoice Hotkey { get; set; } = HotkeyChoice.CtrlAltSpace;
     /// <summary>Нажимать Enter после автоввода пароля.</summary>

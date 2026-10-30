@@ -513,15 +513,26 @@
         </Border>
         <Border Style="{StaticResource SettingRow}">
           <DockPanel>
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
-              <TextBox Style="{StaticResource TextField.Mono}" Width="140" c:A.Label="Порт" c:A.Error="{Binding PortError}"
-                       Text="{Binding PortText, UpdateSourceTrigger=PropertyChanged}" />
-              <Button Style="{StaticResource Button.Outlined}" Margin="12,8,0,0" VerticalAlignment="Top" Content="Применить" Command="{Binding ApplyPortCommand}" />
+            <StackPanel DockPanel.Dock="Right" VerticalAlignment="Top" HorizontalAlignment="Right">
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <RadioButton Style="{StaticResource Connected}" c:A.Position="First" Content="Авто"
+                             IsChecked="{Binding Connection, Converter={StaticResource Equals}, ConverterParameter=Auto}" />
+                <RadioButton Style="{StaticResource Connected}" c:A.Position="Middle" Content="USB"
+                             IsChecked="{Binding Connection, Converter={StaticResource Equals}, ConverterParameter=Usb}" />
+                <RadioButton Style="{StaticResource Connected}" c:A.Position="Last" Content="Симулятор" Margin="0"
+                             IsChecked="{Binding Connection, Converter={StaticResource Equals}, ConverterParameter=Simulator}" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0"
+                          Visibility="{Binding ShowPort, Converter={StaticResource VisibleWhen}}">
+                <TextBox Style="{StaticResource TextField.Mono}" Width="140" c:A.Label="Порт симулятора" c:A.Error="{Binding PortError}"
+                         Text="{Binding PortText, UpdateSourceTrigger=PropertyChanged}" />
+                <Button Style="{StaticResource Button.Outlined}" Margin="12,8,0,0" VerticalAlignment="Top" Content="Применить" Command="{Binding ApplyPortCommand}" />
+              </StackPanel>
             </StackPanel>
             <StackPanel VerticalAlignment="Center">
               <TextBlock Style="{StaticResource SettingTitle}" Text="Подключение" />
               <TextBlock Style="{StaticResource SettingHint}" Text="{Binding TokenText}" />
-              <TextBlock Style="{StaticResource SettingHint}" Text="Симулятор слушает только 127.0.0.1" />
+              <TextBlock Style="{StaticResource SettingHint}" Text="Авто: USB-токен, если подключён, иначе симулятор на 127.0.0.1" />
             </StackPanel>
           </DockPanel>
         </Border>

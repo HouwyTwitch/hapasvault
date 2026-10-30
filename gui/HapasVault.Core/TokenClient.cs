@@ -6,6 +6,12 @@ namespace HapasVault.Core;
 
 public sealed record TokenInfo(bool Paired, bool SetupDone, bool Unlocked, uint Protocol, uint Count, uint UptimeSeconds);
 
+/// <summary>Как искать токен.</summary>
+public enum TokenConnection { Auto, Usb, Simulator }
+
+/// <summary>Через что подключены сейчас.</summary>
+public enum TokenTransport { None, Simulator, Usb }
+
 public sealed record VaultItem(uint Id, string Category, string Name, OtpKind Otp = OtpKind.None);
 
 public sealed record Credential(string Login, string Password);
@@ -38,6 +44,17 @@ public sealed unsafe partial class TokenClient : ITokenClient
     }
 
     public ushort Port { get; set; } = DefaultPort;
+    public TokenConnection Connection { get; set; } = TokenConnection.Auto;
+    /// <summary>Явный последовательный порт вместо поиска по USB (тесты: pty симулятора).</summary>
+    public string? SerialPath { get; set; }
+    public TokenTransport Transport => (TokenTransport)Native.pmapi_transport(Handle);
+
+    /// <summary>Порт подключённого USB-токена ("COM5") или null. Ничего не открывает.</summary>
+    public static string? FindUsb()
+    {
+        byte* buf = stackalloc byte[64];
+        return Native.pmapi_find_usb(buf, 64) == 1 ? Native.Utf8(buf) : null;
+    }
 
     public static int NativeVersion => Native.pmapi_version();
 
@@ -61,7 +78,20 @@ public sealed unsafe partial class TokenClient : ITokenClient
 
     // ---------- соединение ----------
 
-    public Task AttachAsync() { ushort port = Port; return Call(h => Native.pmapi_attach(h, port), connecting: true); }
+    public Task AttachAsync()
+    {
+        ushort port = Port;
+        var mode = Connection;
+        string? serial = SerialPath;
+        return Call(h =>
+        {
+            if (serial != null) return Native.pmapi_attach_serial(h, serial);
+            if (mode == TokenConnection.Simulator) return Native.pmapi_attach(h, port);
+            int rc = Native.pmapi_attach_usb(h);
+            // «Авто»: нет USB-токена — пробуем симулятор
+            return rc == TokenException.NoDeviceCode && mode == TokenConnection.Auto ? Native.pmapi_attach(h, port) : rc;
+        }, connecting: true);
+    }
 
     public Task DetachAsync() => Call(h => { Native.pmapi_detach(h); return 0; });
 

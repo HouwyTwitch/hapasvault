@@ -1,0 +1,7 @@
+{
+  "name": "pmtoken-emu",
+  "private": true,
+  "description": "Прошивка pmtoken в эмуляторе RP2040 (rp2040js) для проверки в CI",
+  "scripts": { "start": "node emu.js" },
+  "dependencies": { "rp2040js": "1.1.1" }
+}

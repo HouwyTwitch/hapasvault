@@ -26,10 +26,13 @@ public enum TokenError
     NoOtp,
     BadTime,
     Version,
+    Busy,             // порт токена открыт другой программой
 }
 
 public sealed class TokenException : Exception
 {
+    internal const int NoDeviceCode = -11;
+
     public int Code { get; }
     public TokenError Error { get; }
 
@@ -59,6 +62,8 @@ public sealed class TokenException : Exception
             12 => TokenError.NoOtp,
             13 => TokenError.BadTime,
             -10 => TokenError.Version,
+            -11 => TokenError.Disconnected,
+            -12 => TokenError.Busy,
             -1 => TokenError.Disconnected,
             -2 or -3 => TokenError.SessionLost,
             -4 => TokenError.NotPaired,
@@ -101,6 +106,7 @@ public sealed class TokenException : Exception
         TokenError.IdentityFile => "Не удалось прочитать или сохранить ключ этого компьютера.",
         TokenError.NoOtp => "У этой записи нет одноразовых кодов.",
         TokenError.BadTime => "Часы компьютера ушли вперёд относительно токена. Проверьте время или переподключите токен.",
+        TokenError.Busy => "Токен занят другой программой (например, pmcli). Закройте её — HapasVault подключится сам.",
         TokenError.Version => "Прошивка токена и программа разных версий. Обновите HapasVault или прошивку.",
         _ => code != 0 ? $"Ошибка токена ({code})." : "Неизвестная ошибка.",
     };

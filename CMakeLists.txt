@@ -15,16 +15,16 @@ endif()
 # Ядро токена — этот же набор файлов войдёт в прошивку RP2040
 add_library(pmcore STATIC
   core/token.c core/store.c core/session.c core/kdf.c
-  core/bip39.c core/bip39_words.c core/sha.c core/otp.c
+  core/bip39.c core/bip39_words.c core/sha.c core/otp.c core/framer.c
   third_party/monocypher/monocypher.c)
 target_include_directories(pmcore PUBLIC core third_party/monocypher)
 
 # Клиент ПК (позже — DLL для GUI)
-add_library(pmclient STATIC client/pmclient.c client/pmnet.c)
+add_library(pmclient STATIC client/pmclient.c client/pmnet.c client/pmserial.c)
 target_include_directories(pmclient PUBLIC client)
 target_link_libraries(pmclient PUBLIC pmcore)
 if(WIN32)
-  target_link_libraries(pmclient PUBLIC ws2_32 bcrypt crypt32)
+  target_link_libraries(pmclient PUBLIC ws2_32 bcrypt crypt32 setupapi advapi32)
 endif()
 
 # C ABI для GUI (C# P/Invoke): pmapi.dll / pmapi.so (без "lib" и на MinGW)
@@ -43,6 +43,10 @@ target_link_libraries(pmtoken_sim PRIVATE pmcore pmclient)
 # Консольный клиент
 add_executable(pmcli tools/pmcli.c)
 target_link_libraries(pmcli PRIVATE pmclient)
+
+# Проверка настоящего токена (USB) или эмулятора прошивки
+add_executable(pmhwtest tools/pmhwtest.c)
+target_link_libraries(pmhwtest PRIVATE pmclient)
 
 # Тесты
 enable_testing()

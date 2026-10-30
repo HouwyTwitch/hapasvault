@@ -3,6 +3,7 @@
 #include "bip39.h"
 #include "pmclient.h"
 #include "pmnet.h"
+#include "pmserial.h"
 #include "monocypher.h"
 #include <stdlib.h>
 #include <string.h>
@@ -11,11 +12,25 @@
  * закрывается: следующий вызов вернёт PMC_E_IO сразу, GUI переподключится. */
 #define PMAPI_IO_TIMEOUT_MS 5000
 
+enum { T_NONE, T_TCP, T_SERIAL };
+
 struct pmapi {
     pm_client c;
+    int       transport;
     pm_sock   sock;
+    pm_serial serial;
     char     *id_path;
 };
+
+static long xfer(void *ctx, const uint8_t *req, size_t req_len, uint8_t *resp, size_t cap)
+{
+    pmapi *h = ctx;
+    switch (h->transport) {
+    case T_TCP:    return pm_net_xfer(&h->sock, req, req_len, resp, cap);
+    case T_SERIAL: return pm_serial_xfer(&h->serial, req, req_len, resp, cap);
+    default:       return -1;
+    }
+}
 
 static int io(pmapi *h, int rc)
 {
@@ -37,7 +52,8 @@ pmapi *pmapi_create(const char *identity_path)
     pmapi *h = calloc(1, sizeof *h);
     if (!h) return NULL;
     h->sock = PM_BAD_SOCK;
-    pmc_init(&h->c, pm_net_xfer, &h->sock);
+    h->serial = PM_BAD_SERIAL;
+    pmc_init(&h->c, xfer, h);
     if (identity_path) {
         size_t n = strlen(identity_path) + 1;
         h->id_path = malloc(n);
@@ -75,17 +91,46 @@ int pmapi_attach(pmapi *h, uint16_t port)
     if (h->sock == PM_BAD_SOCK) return PMC_E_IO;
     /* токен отвечает за миллисекунды; молчание = занят другим клиентом или завис */
     pm_net_set_timeout(h->sock, PMAPI_IO_TIMEOUT_MS);
+    h->transport = T_TCP;
     return io(h, h->c.paired ? pmc_connect(&h->c) : 0);
+}
+
+int pmapi_find_usb(char *path, size_t cap) { return pm_serial_find(path, cap); }
+
+int pmapi_attach_serial(pmapi *h, const char *path)
+{
+    pmapi_detach(h);
+    /* X25519 на Cortex-M0+ — десятки миллисекунд, рукопожатие и запись flash — до секунды */
+    int busy = 0;
+    h->serial = pm_serial_open(path, PMAPI_IO_TIMEOUT_MS, &busy);
+    if (h->serial == PM_BAD_SERIAL) return busy ? PMC_E_BUSY : PMC_E_NO_DEVICE;
+    h->transport = T_SERIAL;
+    return io(h, h->c.paired ? pmc_connect(&h->c) : 0);
+}
+
+int pmapi_attach_usb(pmapi *h)
+{
+    char path[64];
+    if (!pm_serial_find(path, sizeof path)) {
+        pmapi_detach(h);
+        return PMC_E_NO_DEVICE;
+    }
+    return pmapi_attach_serial(h, path);
 }
 
 void pmapi_detach(pmapi *h)
 {
     pm_net_close(h->sock);
+    pm_serial_close(h->serial);
     h->sock = PM_BAD_SOCK;
+    h->serial = PM_BAD_SERIAL;
+    h->transport = T_NONE;
     pm_session_clear(&h->c.sess);
 }
 
-int pmapi_is_attached(const pmapi *h) { return h->sock != PM_BAD_SOCK; }
+int pmapi_is_attached(const pmapi *h) { return h->transport != T_NONE; }
+
+int pmapi_transport(const pmapi *h) { return h->transport; }
 
 int pmapi_pair(pmapi *h)
 {

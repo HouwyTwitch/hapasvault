@@ -47,6 +47,63 @@ jobs:
       - name: Test C# core against simulator
         run: dotnet test gui/HapasVault.Core.Tests -c Release --logger "console;verbosity=normal"
 
+  firmware:
+    name: Firmware (RP2040 + RP2350, emulator)
+    runs-on: ubuntu-latest
+    env:
+      PICO_SDK_VERSION: 2.1.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: ARM toolchain
+        run: sudo apt-get update -q && sudo apt-get install -y -q gcc-arm-none-eabi libnewlib-arm-none-eabi
+
+      - name: Cache pico-sdk
+        uses: actions/cache@v4
+        with:
+          path: ~/pico-sdk
+          key: pico-sdk-${{ env.PICO_SDK_VERSION }}
+
+      - name: pico-sdk
+        run: |
+          if [ ! -d ~/pico-sdk/src ]; then
+            git clone -q --depth 1 -b "$PICO_SDK_VERSION" https://github.com/raspberrypi/pico-sdk ~/pico-sdk
+            git -C ~/pico-sdk submodule update -q --init --depth 1 lib/tinyusb
+          fi
+
+      - name: Build firmware (Pico, Pico 2)
+        run: |
+          for b in pico pico2; do
+            cmake -S firmware -B build-fw-$b -DPICO_SDK_PATH=$HOME/pico-sdk -DPICO_BOARD=$b
+            cmake --build build-fw-$b -j
+            cp build-fw-$b/pmtoken.uf2 pmtoken-$b.uf2
+          done
+          arm-none-eabi-size build-fw-pico/pmtoken.elf build-fw-pico2/pmtoken.elf
+
+      - name: Build pmhwtest
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j --target pmhwtest
+
+      # настоящий ARM-код прошивки и TinyUSB в эмуляторе RP2040; клиент — по тому же протоколу, что по USB
+      - name: Run firmware in RP2040 emulator
+        working-directory: firmware/emu
+        run: |
+          npm ci --no-audit --no-fund
+          node emu.js ../../pmtoken-pico.uf2 47300 > emu.log 2>&1 &
+          for i in $(seq 60); do grep -q "CDC готов" emu.log && break; sleep 1; done
+          rc=0; timeout 900 ../../build/pmhwtest tcp:47300 || rc=$?
+          kill %1 || true
+          cat emu.log
+          exit $rc
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: pmtoken-*.uf2
+
   windows:
     name: Windows x64 (MSVC + WPF)
     runs-on: windows-latest
@@ -136,7 +193,7 @@ jobs:
           $dir = "dist/$name"
           New-Item -ItemType Directory -Force -Path $dir, "$dir/tools" | Out-Null
           Copy-Item publish/HapasVault.exe, publish/pmapi.dll $dir
-          Copy-Item build/Release/pmtoken_sim.exe, build/Release/pmcli.exe "$dir/tools"
+          Copy-Item build/Release/pmtoken_sim.exe, build/Release/pmcli.exe, build/Release/pmhwtest.exe "$dir/tools"
           Copy-Item README.md $dir
           Copy-Item third_party/monocypher/LICENCE.md "$dir/LICENCE-monocypher.md"
           Copy-Item gui/THIRD_PARTY.md $dir
@@ -157,11 +214,13 @@ jobs:
 
   release:
     name: Publish release
-    needs: [linux, windows]
+    needs: [linux, windows, firmware]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write       # Sigstore: подпись attestation ключом на OIDC-токене сборки
+      attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -172,19 +231,32 @@ jobs:
         with:
           name: release-zip
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: dist
 
       - name: Checksums
         working-directory: dist
-        run: sha256sum *.zip | tee SHA256SUMS.txt
+        run: sha256sum *.zip *.uf2 | tee SHA256SUMS.txt
+
+      # Происхождение сборки (SLSA provenance), подписанное Sigstore: какой репозиторий,
+      # коммит и workflow собрали каждый файл. Проверка: gh attestation verify <файл> -R <repo>
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*.uf2
 
       - name: Stable release
         if: github.ref_type == 'tag' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         run: |
           tag="v$VERSION"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/*.zip dist/SHA256SUMS.txt --clobber
+            gh release upload "$tag" dist/*.zip dist/*.uf2 dist/SHA256SUMS.txt --clobber
           else
-            gh release create "$tag" dist/*.zip dist/SHA256SUMS.txt \
+            gh release create "$tag" dist/*.zip dist/*.uf2 dist/SHA256SUMS.txt \
               --target "$GITHUB_SHA" --title "HapasVault $VERSION" --generate-notes --latest
           fi
 
@@ -192,6 +264,6 @@ jobs:
         if: github.ref_type == 'branch' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
         run: |
           gh release delete dev --cleanup-tag --yes 2>/dev/null || true
-          gh release create dev dist/*.zip dist/SHA256SUMS.txt --prerelease --target "$GITHUB_SHA" \
+          gh release create dev dist/*.zip dist/*.uf2 dist/SHA256SUMS.txt --prerelease --target "$GITHUB_SHA" \
             --title "HapasVault $VERSION (dev, ${GITHUB_REF_NAME})" \
             --notes "Сборка из ветки \`${GITHUB_REF_NAME}\`, коммит ${GITHUB_SHA::7}. Перезаписывается при каждом push. Стабильные версии — без пометки «Pre-release»."

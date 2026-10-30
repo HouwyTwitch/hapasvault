@@ -89,6 +89,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         AutoTypeEnter = s.AutoTypeEnter;
         HideFromCapture = s.HideFromCapture;
         CheckUpdates = s.CheckUpdates;
+        Connection = s.Connection;
         _loading = false;
         shell.PropertyChanged += (_, e) =>
         {
@@ -146,6 +147,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _autoTypeEnter;
     [ObservableProperty] private bool _hideFromCapture;
     [ObservableProperty] private bool _checkUpdates;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(ShowPort))] private TokenConnection _connection;
+    public bool ShowPort => Connection != TokenConnection.Usb;
 
     private static uint ToArgb(Color c) => (uint)(c.A << 24 | c.R << 16 | c.G << 8 | c.B);
 
@@ -153,7 +156,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         var info = await _shell.RunAsync(() => _shell.Token.GetInfoAsync());
         if (info != null)
-            TokenText = $"Протокол v{info.Protocol} · {Ru.Plural(info.Count, "запись", "записи", "записей")} · " +
+            TokenText = (_shell.Token.Transport == TokenTransport.Usb ? "USB" : _shell.IsDemo ? "Демо" : "Симулятор") +
+                        $" · протокол v{info.Protocol} · {Ru.Plural(info.Count, "запись", "записи", "записей")} · " +
                         $"работает {Ru.Duration(info.UptimeSeconds)}";
     }
 
@@ -183,6 +187,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         Save(s => s.HideFromCapture = value);
         if (!_loading && System.Windows.Application.Current.MainWindow is MainWindow mw) mw.ApplyChrome();
+    }
+    partial void OnConnectionChanged(TokenConnection value)
+    {
+        if (_loading || value == _shell.Settings.Connection) return;
+        _ = _shell.ChangeConnectionAsync(value, _shell.Settings.Port);
     }
     partial void OnCheckUpdatesChanged(bool value) => Save(s => s.CheckUpdates = value);
     partial void OnRadialEnabledChanged(bool value) => SaveHotkey(s => s.RadialEnabled = value);
@@ -219,8 +228,8 @@ public sealed partial class SettingsViewModel : ObservableObject
             return;
         }
         PortError = null;
-        if (port == _shell.Settings.Port) return;
-        await _shell.ChangePortAsync(port);
+        if (port == _shell.Settings.Port && Connection == _shell.Settings.Connection) return;
+        await _shell.ChangeConnectionAsync(Connection, port);
     }
 
     [RelayCommand]

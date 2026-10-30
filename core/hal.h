@@ -4,8 +4,8 @@
  *
  * Реализации:
  *   sim/hal_sim.c      — ПК: flash = файл, RNG = ОС, время = монотонные часы
- *   firmware/hal_rp2040.c (следующий этап) — flash_range_erase/program,
- *                         pico_rand, time_us_64()
+ *   firmware/hal_rp2040.c  — RP2040/RP2350: flash_range_erase/program,
+ *                            пул RNG (pico_rand, ROSC, АЦП), time_us_64()
  */
 #ifndef PM_HAL_H
 #define PM_HAL_H

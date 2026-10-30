@@ -14,11 +14,24 @@ HapasVault.exe        приложение (self-contained: .NET и WPF внут
 pmapi.dll             клиентская библиотека токена (C, статический CRT)
 tools/pmtoken_sim.exe виртуальный токен
 tools/pmcli.exe       консольный клиент
+tools/pmhwtest.exe    проверка платы-токена по USB
 ```
 
 Там же артефакт `screenshots` — все экраны приложения, отрисованные в CI.
 На Linux тесты ядра идут под AddressSanitizer/UBSan, тесты C#-клиента — против
 настоящего симулятора на обеих ОС.
+
+В релизе также прошивки `pmtoken-pico.uf2` и `pmtoken-pico2.uf2` (см. ниже).
+
+**Проверка подлинности.** Каждый файл релиза получает подписанную через Sigstore
+запись о происхождении (SLSA provenance): из какого репозитория, коммита и
+workflow он собран. Сертификата не нужно — подпись привязана к OIDC-токену
+сборки GitHub Actions. Проверить скачанный файл:
+```
+gh attestation verify HapasVault-0.4.57-win64.zip -R HouwyTwitch/hapasvault
+gh attestation verify pmtoken-pico.uf2 -R HouwyTwitch/hapasvault
+```
+Подделанный или пересобранный в другом месте файл проверку не пройдёт.
 
 Какой релиз получается:
 
@@ -124,12 +137,76 @@ dotnet test gui/HapasVault.Core.Tests -c Release
 dotnet publish gui/HapasVault/HapasVault.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o publish
 ```
 
-## Токен (pmtoken)
+## Прошивка для Raspberry Pi Pico
 
-Этап 1: ядро токена, виртуальный токен и консольный клиент. Работает без платы.
+В каждом релизе есть готовые прошивки: `pmtoken-pico.uf2` (Pico, RP2040) и
+`pmtoken-pico2.uf2` (Pico 2, RP2350). Прошить:
+
+1. Зажмите кнопку **BOOTSEL** и подключите плату к USB — появится диск `RPI-RP2`
+   (у Pico 2 — `RP2350`).
+2. Скопируйте на него `.uf2`. Плата перезагрузится и станет токеном.
+3. Запустите HapasVault: в режиме подключения «Авто» (по умолчанию) он сам
+   найдёт токен. Драйвер не нужен — это стандартный USB CDC (COM-порт).
+
+Перед тем как доверить токену пароли, прогоните проверку на чистой плате
+(`tools/pmhwtest.exe` из архива): сопряжение, все команды, OTP, запись во flash,
+блокировка при отключении. В конце плата стирается обратно.
+```
+pmhwtest            найдёт токен сам
+pmhwtest COM5       или явный порт
+```
+
+Светодиод на плате:
+
+| | |
+|---|---|
+| редкая вспышка раз в 3 с | ждёт программу |
+| вспышка раз в секунду | сессия установлена, хранилище закрыто |
+| горит | хранилище открыто |
+| часто мигает 1,5 с | ошибка (подмена кадра, сбой flash) |
+
+Время операций на Pico (RP2040, 125 МГц), по счётчику тактов в эмуляторе:
+установка сессии ~0,4 с (четыре X25519 на Cortex-M0+), остальные команды
+5–60 мс, плюс ~0,4 с на стирание flash у команд, меняющих хранилище. RP2350
+(Cortex-M33, 150 МГц) быстрее в несколько раз.
+
+**USB-идентификатор.** Сейчас `1209:0001` — тестовый PID pid.codes, его можно
+использовать только для разработки. Для своих плат получите PID на
+[pid.codes](https://pid.codes) (бесплатно для открытого железа) и поменяйте
+`PM_USB_VID/PM_USB_PID` в `core/proto.h`: клиент и прошивка берут их оттуда.
+
+Сборка (нужны `gcc-arm-none-eabi` и pico-sdk 2.1.1):
+```
+cmake -S firmware -B build-fw -DPICO_SDK_PATH=~/pico-sdk -DPICO_BOARD=pico   # или pico2
+cmake --build build-fw          # -> build-fw/pmtoken.uf2
+```
 
 ```
-core/        ядро токена — тот же код уйдёт в прошивку RP2040
+firmware/
+  main.c            главный цикл: USB CDC <-> token_handle, сброс DTR = блокировка
+  hal_rp2040.c      flash (последние 80 КБ), RNG, время, светодиод
+  usb_descriptors.c USB CDC, серийный номер = уникальный ID платы
+  emu/              запуск прошивки в эмуляторе RP2040 (rp2040js) для CI
+```
+
+**Проверка без платы.** CI запускает собранную прошивку в эмуляторе RP2040
+([rp2040js](https://github.com/wokwi/rp2040js)): исполняется настоящий ARM-код
+вместе с TinyUSB, а USB CDC эмулятора проброшен на TCP-порт. Тот же `pmhwtest`
+проходит по нему весь сценарий. Локально:
+```
+cd firmware/emu && npm ci && node emu.js ../../build-fw/pmtoken.uf2 47300
+pmhwtest tcp:47300
+```
+
+Память RP2040: 201 КБ RAM из 264 (один 40-килобайтный буфер кадра на запрос и
+ответ, хранилище в RAM — 32 КБ), стек ~2,2 КБ из 4, flash прошивки — 69 КБ.
+
+## Токен (pmtoken)
+
+Ядро токена — один и тот же код в прошивке, виртуальном токене и тестах.
+
+```
+core/        ядро токена — тот же код в прошивке RP2040/RP2350
   hal.h        5 функций железа: flash, RNG, время, светодиод
   token.c      команды, состояние, лимиты, журнал
   store.c      flash: конфигурация и хранилище, A/B-копии
@@ -137,11 +214,13 @@ core/        ядро токена — тот же код уйдёт в прош
   kdf.c        вывод ключей
   bip39.c      24 слова восстановления
   sha.c, otp.c SHA-1/SHA-256/HMAC, TOTP и Steam Guard
-  proto.h      протокол: кадры, команды, статусы
-sim/         виртуальный токен: TCP 127.0.0.1:47123, flash = файл
-client/      библиотека ПК (pmclient) + TCP-транспорт; pmapi — DLL для GUI
-tools/       pmcli — консольный клиент для проверки
-tests/       202 автотеста и фаззер pmfuzz
+  framer.c     сборка кадров из потока байт (USB CDC)
+  proto.h      протокол: кадры, команды, статусы, USB VID/PID
+firmware/    прошивка для Pico и Pico 2 (см. выше)
+sim/         виртуальный токен: TCP 127.0.0.1:47123 или --pty, flash = файл
+client/      библиотека ПК (pmclient), транспорты TCP и USB CDC; pmapi — DLL для GUI
+tools/       pmcli — консольный клиент; pmhwtest — проверка платы
+tests/       228 автотестов и фаззер pmfuzz
 third_party/ Monocypher 4 (X25519, XChaCha20-Poly1305, BLAKE2b, Argon2id)
 ```
 
@@ -250,6 +329,5 @@ K_vault  = KDF(K_token, K_pc || pw_hash)              только в RAM ток
 
 ## Дальше
 
-1. **Прошивка RP2040**: `firmware/hal_rp2040.c` (flash_range_erase/program,
-   pico_rand, WS2812 по PIO) + TinyUSB raw HID. Ядро `core/` не меняется.
+1. Проверить прошивку на живой плате (`pmhwtest`) и получить свой USB PID.
 2. Импорт QR-кода 2FA с экрана; подтверждения Steam (identity_secret).

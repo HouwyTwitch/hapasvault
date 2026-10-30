@@ -24,7 +24,7 @@
 #  define PMAPI __attribute__((visibility("default")))
 #endif
 
-#define PMAPI_VERSION 3   /* 3: OTP, правка записи на месте */
+#define PMAPI_VERSION 4   /* 4: USB-токен (CDC); 3: OTP, правка записи на месте */
 
 typedef struct pmapi pmapi;
 
@@ -50,8 +50,17 @@ PMAPI void    pmapi_set_argon(pmapi *h, uint32_t kib, uint32_t passes);
 /* Транспорт: подключиться к токену (127.0.0.1:port) и, если ПК сопряжён,
  * установить сессию. detach = «выдернуть токен», хранилище блокируется. */
 PMAPI int     pmapi_attach(pmapi *h, uint16_t port);
+/* Настоящий токен по USB: найти по VID/PID и подключиться.
+ * PMC_E_NO_DEVICE — не подключён, PMC_E_BUSY — порт занят другой программой. */
+PMAPI int     pmapi_attach_usb(pmapi *h);
+/* То же для явно заданного порта ("COM5", "/dev/ttyACM0", pty в тестах). */
+PMAPI int     pmapi_attach_serial(pmapi *h, const char *path);
+/* Имя порта подключённого USB-токена; 1 = найден. Ничего не открывает. */
+PMAPI int     pmapi_find_usb(char *path, size_t cap);
 PMAPI void    pmapi_detach(pmapi *h);
 PMAPI int     pmapi_is_attached(const pmapi *h);
+/* 0 — не подключён, 1 — симулятор (TCP), 2 — USB/последовательный порт. */
+PMAPI int     pmapi_transport(const pmapi *h);
 
 PMAPI int     pmapi_pair(pmapi *h);
 PMAPI int     pmapi_forget_pairing(pmapi *h);   /* токен сброшен без этого ПК */

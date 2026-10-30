@@ -17,6 +17,7 @@
 #include "token.h"
 #include "sha.h"
 #include "otp.h"
+#include "framer.h"
 #include "wire.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -540,6 +541,56 @@ static void test_otp_protocol(void)
     pmc_wipe(&c);
 }
 
+static void test_framer(void)
+{
+    section("сборка кадров из потока (USB CDC)");
+    uint8_t stream[64], buf[16];
+    size_t n = 0;
+    pm_framer_header(stream, 5);  memcpy(stream + 4, "hello", 5);  n = 9;
+    pm_framer_header(stream + n, 3); memcpy(stream + n + 4, "abc", 3); n += 7;
+    pm_framer f;
+    pm_framer_reset(&f);
+    /* по одному байту */
+    int got = 0;
+    for (size_t i = 0; i < n; i++) {
+        size_t used;
+        long r = pm_framer_feed(&f, buf, sizeof buf, stream + i, 1, &used);
+        if (r == 5 && !memcmp(buf, "hello", 5)) got |= 1;
+        if (r == 3 && !memcmp(buf, "abc", 3)) got |= 2;
+        CHECK(used == 1 || r != 0, "байт потреблён");
+    }
+    CHECK(got == 3 && !pm_framer_busy(&f), "по одному байту: оба кадра");
+    /* оба кадра одним куском: второй — в остатке */
+    size_t used;
+    long r = pm_framer_feed(&f, buf, sizeof buf, stream, n, &used);
+    CHECK(r == 5 && used == 9, "первый кадр, остаток не тронут");
+    r = pm_framer_feed(&f, buf, sizeof buf, stream + used, n - used, &used);
+    CHECK(r == 3 && !memcmp(buf, "abc", 3), "второй кадр из остатка");
+    /* длина больше буфера и нулевая — отказ со сбросом */
+    uint8_t bad[4];
+    pm_framer_header(bad, sizeof buf + 1);
+    CHECK(pm_framer_feed(&f, buf, sizeof buf, bad, 4, &used) == -1 && !pm_framer_busy(&f), "слишком длинный кадр");
+    pm_framer_header(bad, 0);
+    CHECK(pm_framer_feed(&f, buf, sizeof buf, bad, 4, &used) == -1, "пустой кадр");
+    /* обрыв посреди кадра: busy, сброс по таймауту делает транспорт */
+    pm_framer_feed(&f, buf, sizeof buf, stream, 6, &used);
+    CHECK(pm_framer_busy(&f), "незаконченный кадр виден");
+    pm_framer_reset(&f);
+    r = pm_framer_feed(&f, buf, sizeof buf, stream + 9, 7, &used);
+    CHECK(r == 3, "после сброса — снова синхронно");
+
+    section("token_handle: вход и выход в одном буфере");
+    hal_sim_erase();
+    token_init();
+    static uint8_t io[PM_MAX_FRAME + 64];
+    io[0] = FR_PAIR;
+    memset(io + 1, 0x42, 32);
+    size_t out = token_handle(io, 33, io, sizeof io);
+    uint8_t pub[32];
+    token_public_key(pub);
+    CHECK(out == 33 && io[0] == FR_PAIR && !memcmp(io + 1, pub, 32), "PAIR на месте");
+}
+
 static void test_security_hardening(void)
 {
     pm_client c;
@@ -582,29 +633,35 @@ static void test_security_hardening(void)
     section("миграция хранилища v1 -> v2");
     static uint8_t v1[256];
     size_t n = 0;
-    v1[n++] = 1; v1[n++] = 0;                 /* count */
+    v1[n++] = 2; v1[n++] = 0;                 /* count */
     wire_put32(v1 + n, 6); n += 4;            /* next_id, версия 0 = v1 */
     wire_put32(v1 + n, 5); n += 4;            /* id */
     const char *f[] = {"Старое", "Legacy", "olduser"};
     for (int i = 0; i < 3; i++) { size_t l = strlen(f[i]); v1[n++] = (uint8_t)l; memcpy(v1 + n, f[i], l); n += l; }
     v1[n++] = 6; v1[n++] = 0; memcpy(v1 + n, "old-pw", 6); n += 6;
+    wire_put32(v1 + n, 4); n += 4;            /* вторая запись: миграция сдвигает хвост */
+    const char *g[] = {"", "Second", "u2"};
+    for (int i = 0; i < 3; i++) { size_t l = strlen(g[i]); v1[n++] = (uint8_t)l; memcpy(v1 + n, g[i], l); n += l; }
+    v1[n++] = 3; v1[n++] = 0; memcpy(v1 + n, "pw2", 3); n += 3;
     CHECK(store_vault_save(kv, v1, n) == 0, "подложили хранилище старого формата");
     reboot_token();
     pmc_connect(&c);
     CHECK_RC(pmc_unlock(&c, PW), 0, "открывается");
     memset(g_list_otp, 0xEE, sizeof g_list_otp);
-    CHECK(list_count(&c) == 1 && seen("Legacy"), "запись на месте");
+    CHECK(list_count(&c) == 2 && seen("Legacy") && seen("Second"), "записи на месте");
     CHECK_RC(pmc_list(&c, otp_cb, NULL), 0, "list");
-    CHECK(g_list_otp[5] == OTP_NONE, "OTP нет");
+    CHECK(g_list_otp[5] == OTP_NONE && g_list_otp[4] == OTP_NONE, "OTP нет");
     CHECK_RC(pmc_get(&c, 5, login, sizeof login, pw, sizeof pw), 0, "get");
     CHECK(!strcmp(login, "olduser") && !strcmp(pw, "old-pw"), "данные целы");
+    CHECK_RC(pmc_get(&c, 4, login, sizeof login, pw, sizeof pw), 0, "get второй");
+    CHECK(!strcmp(login, "u2") && !strcmp(pw, "pw2"), "вторая цела");
     uint32_t id;
     CHECK_RC(pmc_add(&c, "", "Новая", "n", "np", &id), 0, "add после миграции");
     CHECK(id == 6, "нумерация продолжилась");
     reboot_token();
     pmc_connect(&c);
     CHECK_RC(pmc_unlock(&c, PW), 0, "после перезагрузки (уже v2)");
-    CHECK(list_count(&c) == 2, "обе записи");
+    CHECK(list_count(&c) == 3, "все записи");
     pmc_wipe(&c);
 }
 
@@ -621,6 +678,7 @@ int main(int argc, char **argv)
     test_hashes_and_otp_vectors();
     test_otp_protocol();
     test_security_hardening();
+    test_framer();
     if (argc > 1 && !strcmp(argv[1], "--argon")) test_real_argon_cost();
     printf("\nИтого: %d пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

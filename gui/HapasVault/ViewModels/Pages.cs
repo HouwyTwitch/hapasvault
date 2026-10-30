@@ -12,7 +12,12 @@ public sealed partial class ConnectViewModel(ShellViewModel shell) : ObservableO
     /// <summary>Ошибка, при которой автоматический поиск бессмыслен (чужой токен).</summary>
     [ObservableProperty] private string? _error;
 
-    public string Hint => $"Подключите токен или запустите pmtoken_sim. Ищу на 127.0.0.1:{Shell.Settings.Port}";
+    public string Hint => Shell.Settings.Connection switch
+    {
+        TokenConnection.Usb => "Подключите токен к USB. Драйвер не нужен: Windows видит его как COM-порт.",
+        TokenConnection.Simulator => $"Запустите pmtoken_sim. Ищу на 127.0.0.1:{Shell.Settings.Port}",
+        _ => $"Подключите токен к USB или запустите pmtoken_sim (127.0.0.1:{Shell.Settings.Port})",
+    };
 
     [RelayCommand]
     private async Task Retry()

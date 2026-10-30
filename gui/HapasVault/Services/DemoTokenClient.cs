@@ -61,6 +61,8 @@ public sealed class DemoTokenClient : ITokenClient
         _log.Add(new LogRecord(Uptime - agoSeconds, cmd, st, id, 0));
 
     public ushort Port { get; set; }
+    public TokenConnection Connection { get; set; }
+    public TokenTransport Transport => TokenTransport.Simulator;
     public bool IsPaired { get; private set; }
     public bool HasKey { get; private set; }
     public bool IsAttached { get; private set; }

@@ -31,6 +31,7 @@ public sealed partial class ShellViewModel : ObservableObject
         Settings = settings;
         Theme = theme;
         Token.Port = settings.Port;
+        Token.Connection = settings.Connection;
 
         _poll.Tick += async (_, _) => await PollAsync();
         _idle.Tick += async (_, _) => await CheckIdleAsync();
@@ -202,6 +203,11 @@ public sealed partial class ShellViewModel : ObservableObject
                     if (Page is ConnectViewModel c) c.Error = null;
                     else Page = new ConnectViewModel(this);
                     break;
+                case TokenError.Busy:
+                    Info = null;
+                    if (Page is ConnectViewModel cv) cv.Error = e.Message;
+                    else Page = new ConnectViewModel(this) { Error = e.Message };
+                    break;
                 case TokenError.ForeignToken:
                     Page = new ConnectViewModel(this) { Error = e.Message + " Сбросьте токен на том компьютере или подключите свой." };
                     break;
@@ -338,11 +344,13 @@ public sealed partial class ShellViewModel : ObservableObject
         await RefreshAsync();
     }
 
-    public async Task ChangePortAsync(ushort port)
+    public async Task ChangeConnectionAsync(TokenConnection mode, ushort port)
     {
         Settings.Port = port;
+        Settings.Connection = mode;
         Settings.Save();
         Token.Port = port;
+        Token.Connection = mode;
         await Token.DetachAsync();
         Page = null;
         await RefreshAsync();

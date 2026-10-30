@@ -29,6 +29,10 @@ internal static unsafe partial class Native
     [LibraryImport(Lib)] internal static partial void pmapi_set_argon(nint h, uint kib, uint passes);
 
     [LibraryImport(Lib)] internal static partial int pmapi_attach(nint h, ushort port);
+    [LibraryImport(Lib)] internal static partial int pmapi_attach_usb(nint h);
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)] internal static partial int pmapi_attach_serial(nint h, string path);
+    [LibraryImport(Lib)] internal static partial int pmapi_find_usb(byte* path, nuint cap);
+    [LibraryImport(Lib)] internal static partial int pmapi_transport(nint h);
     [LibraryImport(Lib)] internal static partial void pmapi_detach(nint h);
     [LibraryImport(Lib)] internal static partial int pmapi_is_attached(nint h);
 

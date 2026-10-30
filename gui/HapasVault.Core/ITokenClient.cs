@@ -4,6 +4,8 @@ namespace HapasVault.Core;
 public interface ITokenClient : IDisposable
 {
     ushort Port { get; set; }
+    TokenConnection Connection { get; set; }
+    TokenTransport Transport { get; }
     bool IsPaired { get; }
     bool HasKey { get; }
     bool IsAttached { get; }

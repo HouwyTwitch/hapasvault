@@ -21,12 +21,17 @@ public sealed class Sim : IDisposable
     public string Dir { get; }
     public ushort Port { get; }
 
-    public Sim(string? dir = null)
+    public Sim(string? dir = null, bool pty = false)
     {
         Dir = dir ?? Directory.CreateTempSubdirectory("hapas-test-").FullName;
         Port = (ushort)Interlocked.Increment(ref _next);
+        UsePty = pty;
         Start();
     }
+
+    /// <summary>Псевдотерминал вместо TCP: тот же поток байт, что у USB CDC прошивки.</summary>
+    public bool UsePty { get; }
+    public string? PtyPath { get; private set; }
 
     public string FlashPath => Path.Combine(Dir, "token_flash.bin");
 
@@ -44,6 +49,11 @@ public sealed class Sim : IDisposable
 
     public void Start()
     {
+        if (UsePty)
+        {
+            StartPty();
+            return;
+        }
         _proc = Process.Start(new ProcessStartInfo(Executable)
         {
             ArgumentList = { FlashPath, Port.ToString() },
@@ -70,6 +80,25 @@ public sealed class Sim : IDisposable
         throw new TimeoutException("симулятор не запустился");
     }
 
+    private void StartPty()
+    {
+        _proc = Process.Start(new ProcessStartInfo(Executable)
+        {
+            ArgumentList = { FlashPath, "--pty" },
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        })!;
+        _proc.BeginErrorReadLine();
+        string? line;
+        do line = _proc.StandardOutput.ReadLine();
+        while (line != null && !line.StartsWith("PTY "));
+        if (line == null) throw new InvalidOperationException("симулятор не дал pty");
+        PtyPath = line[4..].Trim();
+        var stdout = _proc.StandardOutput;
+        _ = Task.Run(() => { while (stdout.ReadLine() != null) { } });   // не дать трубе заполниться
+    }
+
     public void Stop()
     {
         if (_proc is { HasExited: false }) { _proc.Kill(); _proc.WaitForExit(); }
@@ -80,7 +109,7 @@ public sealed class Sim : IDisposable
     public TokenClient Client(string identity = "pc.id")
     {
         // профиль с кириллицей в пути: на Windows ловит открытие файла через ANSI
-        var c = new TokenClient(Path.Combine(Dir, "Профиль Иван", identity)) { Port = Port };
+        var c = new TokenClient(Path.Combine(Dir, "Профиль Иван", identity)) { Port = Port, SerialPath = PtyPath };
         c.SetArgon(1024, 1);   // быстрее в тестах; на всех «ПК» теста одинаково
         return c;
     }
