@@ -2,7 +2,9 @@ name: build
 
 on:
   push:
-    branches: ["**"]
+    # ветки Dependabot проверяются через pull_request; push-сборка дублировала бы
+    # прогон и публиковала бы предрелиз dev из обновления зависимости
+    branches: ["**", "!dependabot/**"]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -10,7 +12,8 @@ on:
 # Релизы публикуются сами (job release):
 #   push в main      -> релиз v<VERSION>.<номер сборки>, помечается «последним»
 #   push тега v*     -> релиз с этим тегом
-#   push в др. ветку -> предрелиз «dev» (один, перезаписывается последней сборкой)
+#   push в др. ветку -> предрелиз «dev» (один, перезаписывается последней сборкой;
+#                       кроме веток Dependabot)
 # Публикация — только после зелёных тестов на Linux и Windows.
 
 permissions:
@@ -215,8 +218,12 @@ jobs:
   release:
     name: Publish release
     needs: [linux, windows, firmware]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    # публикации из разных веток по очереди: иначе они делят тег dev
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: write
       id-token: write       # Sigstore: подпись attestation ключом на OIDC-токене сборки
@@ -264,6 +271,8 @@ jobs:
         if: github.ref_type == 'branch' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
         run: |
           gh release delete dev --cleanup-tag --yes 2>/dev/null || true
+          # тег мог остаться без релиза после прерванной публикации
+          gh api -X DELETE "repos/$GH_REPO/git/refs/tags/dev" 2>/dev/null || true
           gh release create dev dist/*.zip dist/*.uf2 dist/SHA256SUMS.txt --prerelease --target "$GITHUB_SHA" \
             --title "HapasVault $VERSION (dev, ${GITHUB_REF_NAME})" \
             --notes "Сборка из ветки \`${GITHUB_REF_NAME}\`, коммит ${GITHUB_SHA::7}. Перезаписывается при каждом push. Стабильные версии — без пометки «Pre-release»."
