@@ -102,7 +102,7 @@ jobs:
           exit $rc
 
       - name: Upload firmware
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: firmware
           path: pmtoken-*.uf2
@@ -183,7 +183,7 @@ jobs:
 
       - name: Upload screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: screenshots
           path: screenshots/
@@ -203,13 +203,13 @@ jobs:
           Compress-Archive -Path "$dir/*" -DestinationPath "dist/$name.zip"
 
       - name: Upload build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.ver.outputs.package }}
           path: dist/${{ steps.ver.outputs.package }}/
 
       - name: Upload release archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-zip
           path: dist/${{ steps.ver.outputs.package }}.zip
