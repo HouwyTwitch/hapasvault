@@ -65,7 +65,7 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q gcc-arm-none-eabi libnewlib-arm-none-eabi
 
       - name: Cache pico-sdk
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/pico-sdk
           key: pico-sdk-${{ env.PICO_SDK_VERSION }}
