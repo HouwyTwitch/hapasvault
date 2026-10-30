@@ -199,6 +199,7 @@ void pm_serial_close(pm_serial ps)
 {
     if (ps == PM_BAD_SERIAL) return;
     serial_posix *s = (serial_posix *)ps;
+    ioctl(s->fd, TIOCNXCL);     /* у pty флаг живёт дольше нашего дескриптора */
     close(s->fd);
     free(s);
 }
