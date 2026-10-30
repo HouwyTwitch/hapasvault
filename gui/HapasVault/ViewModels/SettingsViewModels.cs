@@ -88,13 +88,50 @@ public sealed partial class SettingsViewModel : ObservableObject
         Hotkey = s.Hotkey;
         AutoTypeEnter = s.AutoTypeEnter;
         HideFromCapture = s.HideFromCapture;
+        CheckUpdates = s.CheckUpdates;
         _loading = false;
+        shell.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(ShellViewModel.Update)) return;
+            OnPropertyChanged(nameof(UpdateTitle));
+            OnPropertyChanged(nameof(UpdateText));
+        };
     }
 
     public ShellViewModel Shell => _shell;
     public ObservableCollection<Swatch> Swatches { get; } = new();
     public bool IsDemo => _shell.IsDemo;
-    public string Version => typeof(SettingsViewModel).Assembly.GetName().Version?.ToString(3) ?? "";
+    public string Version => Services.UpdateChecker.DisplayVersion;
+
+    public string UpdateTitle => _shell.Update is { } u ? $"Доступна версия {u.Version.ToString(3)}" : $"Версия {Version}";
+    public string UpdateText => _checking ? "Проверяю…"
+        : _shell.Update != null ? "Откроется страница релиза на GitHub: архив и контрольные суммы SHA-256"
+        : Services.UpdateChecker.IsDevBuild ? "Локальная сборка: проверка обновлений отключена"
+        : _checked ? "Это последняя версия" : "Новые версии публикуются автоматически после проверки CI";
+
+    private bool _checking, _checked;
+
+    [RelayCommand]
+    private async Task CheckUpdate()
+    {
+        _checking = true;
+        Notify();
+        _checked = await _shell.CheckUpdatesAsync(silent: false);
+        _checking = false;
+        Notify();
+
+        void Notify()
+        {
+            OnPropertyChanged(nameof(UpdateTitle));
+            OnPropertyChanged(nameof(UpdateText));
+        }
+    }
+
+    [RelayCommand]
+    private void OpenUpdate()
+    {
+        if (_shell.Update is { } u) Services.UpdateChecker.Open(u);
+    }
 
     [ObservableProperty] private ThemeMode _theme;
     [ObservableProperty] private PaletteStyle _palette;
@@ -108,6 +145,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private HotkeyChoice _hotkey;
     [ObservableProperty] private bool _autoTypeEnter;
     [ObservableProperty] private bool _hideFromCapture;
+    [ObservableProperty] private bool _checkUpdates;
 
     private static uint ToArgb(Color c) => (uint)(c.A << 24 | c.R << 16 | c.G << 8 | c.B);
 
@@ -146,6 +184,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         Save(s => s.HideFromCapture = value);
         if (!_loading && System.Windows.Application.Current.MainWindow is MainWindow mw) mw.ApplyChrome();
     }
+    partial void OnCheckUpdatesChanged(bool value) => Save(s => s.CheckUpdates = value);
     partial void OnRadialEnabledChanged(bool value) => SaveHotkey(s => s.RadialEnabled = value);
     partial void OnHotkeyChanged(HotkeyChoice value) => SaveHotkey(s => s.Hotkey = value);
 

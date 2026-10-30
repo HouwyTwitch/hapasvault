@@ -83,6 +83,7 @@ public partial class App : Application
 
         if (demo) await _shell.EnterDemoAsync();
         await _shell.StartAsync();
+        if (settings.CheckUpdates && !demo) _ = _shell.CheckUpdatesAsync(silent: true);
         if (nativeProblem != null) _shell.Snackbar.Show(nativeProblem);
         if (!hotkeyOk)
             _shell.Snackbar.Show($"Сочетание {GlobalHotkey.Describe(settings.Hotkey)} занято другой программой — выберите другое в настройках");

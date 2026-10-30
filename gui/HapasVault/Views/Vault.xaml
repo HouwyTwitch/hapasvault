@@ -545,6 +545,30 @@
           </DockPanel>
         </Border>
 
+        <TextBlock Style="{StaticResource Section}" Text="Обновления" />
+        <Border Style="{StaticResource SettingRow}" CornerRadius="28,28,6,6">
+          <DockPanel>
+            <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Switch}" IsChecked="{Binding CheckUpdates}" VerticalAlignment="Center" />
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock Style="{StaticResource SettingTitle}" Text="Проверять при запуске" />
+              <TextBlock Style="{StaticResource SettingHint}" Text="Один анонимный запрос к GitHub Releases. Устанавливать или нет — решаете вы." />
+            </StackPanel>
+          </DockPanel>
+        </Border>
+        <Border Style="{StaticResource SettingRow}" CornerRadius="6,6,28,28">
+          <DockPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+              <Button Style="{StaticResource Button.Filled}" Content="Скачать" c:A.Icon="{StaticResource Icon.Download}" Margin="0,0,8,0"
+                      Command="{Binding OpenUpdateCommand}" Visibility="{Binding Shell.Update, Converter={StaticResource VisibleWhen}}" />
+              <Button Style="{StaticResource Button.Tonal}" Content="Проверить" Command="{Binding CheckUpdateCommand}" />
+            </StackPanel>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock Style="{StaticResource SettingTitle}" Text="{Binding UpdateTitle}" />
+              <TextBlock Style="{StaticResource SettingHint}" Text="{Binding UpdateText}" />
+            </StackPanel>
+          </DockPanel>
+        </Border>
+
         <StackPanel Orientation="Horizontal" Margin="20,32,0,0">
           <c:MorphShape Width="28" Height="28" Shape="Cookie9" Fill="{DynamicResource Primary}" Spin="20">
             <Ellipse Width="8" Height="8" Fill="{DynamicResource OnPrimary}" />

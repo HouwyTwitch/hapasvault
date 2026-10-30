@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -64,6 +65,7 @@ public sealed partial class ShellViewModel : ObservableObject
     [ObservableProperty] private DialogViewModel? _dialog;
     [ObservableProperty] private TokenInfo? _info;
     [ObservableProperty] private bool _isDemo;
+    [ObservableProperty] private UpdateInfo? _update;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsBusy))] private int _busy;
 
     public bool IsBusy => Busy > 0;
@@ -88,6 +90,26 @@ public sealed partial class ShellViewModel : ObservableObject
     }
 
     partial void OnIsDemoChanged(bool value) => OnPropertyChanged(nameof(Status));
+
+    /// <summary>Спросить GitHub о новой версии. silent — без сообщений об ошибках и «нет обновлений».</summary>
+    public async Task<bool> CheckUpdatesAsync(bool silent)
+    {
+        try
+        {
+            Update = await UpdateChecker.CheckAsync();
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException
+                                      or KeyNotFoundException or InvalidOperationException)
+        {
+            if (!silent) Snackbar.Show("Не удалось проверить обновления: нет связи с GitHub");
+            return false;
+        }
+        if (Update is { } u)
+            Snackbar.Show($"Доступна версия {u.Version.ToString(3)}", "Скачать", () => { UpdateChecker.Open(u); return Task.CompletedTask; });
+        else if (!silent)
+            Snackbar.Show(UpdateChecker.IsDevBuild ? "Локальная сборка — проверять не с чем" : "Установлена последняя версия");
+        return true;
+    }
 
     public async Task StartAsync()
     {

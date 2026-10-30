@@ -32,6 +32,8 @@ public sealed class AppSettings
     public bool AutoTypeEnter { get; set; } = true;
     /// <summary>Скрывать окна от захвата экрана (скриншоты, запись, демонстрация).</summary>
     public bool HideFromCapture { get; set; } = true;
+    /// <summary>Раз в запуск спрашивать GitHub, нет ли новой версии.</summary>
+    public bool CheckUpdates { get; set; } = true;
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -57,7 +59,10 @@ public sealed class AppSettings
         try
         {
             Directory.CreateDirectory(Folder);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, Json));
+            // через временный файл: сбой посреди записи не обнулит настройки
+            string tmp = FilePath + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(this, Json));
+            File.Move(tmp, FilePath, overwrite: true);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
