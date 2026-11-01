@@ -144,13 +144,13 @@ internal sealed class FakeSteam : HttpMessageHandler
     private static HttpResponseMessage Json(string json) =>
         new(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
-    private static async Task<ProtoMessage> Body(HttpRequestMessage req)
-    {
-        string b64 = req.Method == HttpMethod.Get
-            ? HttpUtility.ParseQueryString(req.RequestUri!.Query)["input_protobuf_encoded"]!
-            : await ((MultipartFormDataContent)req.Content!).First(p => p.Headers.ContentDisposition!.Name!.Trim('"') == "input_protobuf_encoded").ReadAsStringAsync();
-        return ProtoMessage.Parse(Convert.FromBase64String(b64));
-    }
+    private static async Task<System.Collections.Specialized.NameValueCollection> Form(HttpRequestMessage req) =>
+        HttpUtility.ParseQueryString(await req.Content!.ReadAsStringAsync());
+
+    private static async Task<ProtoMessage> Body(HttpRequestMessage req) =>
+        ProtoMessage.Parse(Convert.FromBase64String((await Form(req))["input_protobuf_encoded"]!));
+
+    public int ResetsLeft { get; set; }
 
     private bool KeyOk(System.Collections.Specialized.NameValueCollection q, string tag)
     {
@@ -168,11 +168,22 @@ internal sealed class FakeSteam : HttpMessageHandler
     {
         string path = req.RequestUri!.AbsolutePath;
         var p = _rsa.ExportParameters(false);
+        if (req.RequestUri.Host == "api.steampowered.com")
+        {
+            Assert.Equal("https://steamcommunity.com/", req.Headers.Referrer?.ToString());
+            if (ResetsLeft > 0)
+            {
+                ResetsLeft--;
+                throw new HttpRequestException(HttpRequestError.ResponseEnded, "The response ended prematurely.");
+            }
+        }
         switch (path)
         {
             case "/IAuthenticationService/GetPasswordRSAPublicKey/v1/":
-                Assert.Equal(_account, (await Body(req)).String(1));
-                return Proto(new ProtoWriter().String(1, Convert.ToHexString(p.Modulus!)).String(2, Convert.ToHexString(p.Exponent!)).UInt(3, 4242));
+                // как в aiosteampy: GET с account_name, ответ JSON
+                Assert.Equal(_account, HttpUtility.ParseQueryString(req.RequestUri.Query)["account_name"]);
+                string mod = Convert.ToHexString(p.Modulus!), exp = Convert.ToHexString(p.Exponent!);
+                return Json("{\"response\":{\"publickey_mod\":\"" + mod + "\",\"publickey_exp\":\"" + exp + "\",\"timestamp\":\"4242\"}}");
             case "/IAuthenticationService/BeginAuthSessionViaCredentials/v1/":
             {
                 var b = await Body(req);
@@ -183,11 +194,11 @@ internal sealed class FakeSteam : HttpMessageHandler
             }
             case "/IAuthenticationService/UpdateAuthSessionWithSteamGuardCode/v1/":
             {
-                var b = await Body(req);
+                var f = await Form(req);                 // обычные поля формы
                 var otp = new OtpSecret(OtpKind.Steam, _shared);
                 var now = DateTimeOffset.UtcNow;
-                bool ok = b.String(3) == otp.Code(now) || b.String(3) == otp.Code(now.AddSeconds(-30));
-                Assert.Equal((77ul, SteamId, 3ul), (b.UInt(1), b.UInt(2), b.UInt(4)));
+                bool ok = f["code"] == otp.Code(now) || f["code"] == otp.Code(now.AddSeconds(-30));
+                Assert.Equal(("77", SteamId.ToString(), "3"), (f["client_id"], f["steamid"], f["code_type"]));
                 return Proto(new ProtoWriter(), eresult: ok ? 1 : 88);
             }
             case "/IAuthenticationService/PollAuthSessionStatus/v1/":
@@ -274,6 +285,7 @@ public class SteamTokenTests
 
         // вход, список, ответы — пароль и код Steam Guard берутся у токена
         var steam = new FakeSteam("ivan_gamer", "steam-password", secret.Secret, secret.Mobile.IdentitySecret);
+        steam.ResetsLeft = 1;                            // первый ответ оборвётся — повтор
         using var web = new SteamWeb(steam, delay: (_, _) => Task.CompletedTask);
         var store = new MemoryStore();
         var confirmer = new SteamConfirmer(c, id, web, store);

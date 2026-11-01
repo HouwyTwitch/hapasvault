@@ -112,14 +112,20 @@ public sealed class SteamWeb : ISteamWeb, IDisposable
         }
         catch (HttpRequestException e)
         {
-            throw new SteamException($"Нет связи с {host}: {Innermost(e)}. Если интернет работает, сервер может быть " +
-                                     "недоступен у провайдера — укажите прокси в Настройки → Steam.", network: true);
+            throw NetworkError(host, e);
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
         {
-            throw new SteamException($"{host} не ответил за 30 с. Проверьте интернет или прокси (Настройки → Steam).", network: true);
+            throw TimeoutError(host);
         }
     }
+
+    private static SteamException NetworkError(string? host, HttpRequestException e) =>
+        new($"Нет связи с {host ?? "Steam"}: {Innermost(e)}. Если интернет работает, сервер может быть " +
+            "недоступен у провайдера — укажите прокси в Настройки → Steam.", network: true);
+
+    private static SteamException TimeoutError(string? host) =>
+        new($"{host ?? "Steam"} не ответил за 30 с. Проверьте интернет или прокси (Настройки → Steam).", network: true);
 
     /// <summary>Доступность серверов Steam: вход (api) и подтверждения (community).</summary>
     public async Task<IReadOnlyList<(string Host, string? Error)>> ProbeAsync(CancellationToken ct = default)
@@ -156,22 +162,104 @@ public sealed class SteamWeb : ISteamWeb, IDisposable
 
     // ---------------- IAuthenticationService ----------------
 
-    private async Task<ProtoMessage> CallAsync(string method, ProtoWriter body, bool get, CancellationToken ct)
+    // Как браузер на steamcommunity.com (так делают steam-session и aiosteampy): без этих
+    // заголовков api.steampowered.com иногда просто закрывает соединение
+    private static void ApiHeaders(HttpRequestMessage req)
     {
-        string url = $"{Api}/IAuthenticationService/{method}/v1/";
-        string encoded = Convert.ToBase64String(body.ToArray());
-        using var req = get
-            ? new HttpRequestMessage(HttpMethod.Get, $"{url}?input_protobuf_encoded={Uri.EscapeDataString(encoded)}&origin=SteamMobile")
-            : new HttpRequestMessage(HttpMethod.Post, url)
+        req.Headers.Referrer = new Uri(Community + "/");
+        req.Headers.Add("Origin", Community);
+        req.Headers.Accept.ParseAdd("application/json, text/plain, */*");
+    }
+
+    /// <summary>Ответ IAuthenticationService: protobuf или JSON — Steam отдаёт и так, и так.</summary>
+    private sealed class ApiResult(ProtoMessage? proto, JsonElement json)
+    {
+        private JsonElement Field(string name) =>
+            json.ValueKind == JsonValueKind.Object && json.TryGetProperty("response", out var r) &&
+            r.ValueKind == JsonValueKind.Object && r.TryGetProperty(name, out var v) ? v : default;
+
+        public string Str(string name, int field) => proto != null ? proto.String(field)
+            : Field(name) is { ValueKind: JsonValueKind.String } v ? v.GetString() ?? "" : "";
+
+        public ulong UInt(string name, int field)
+        {
+            if (proto != null) return proto.UInt(field);
+            var v = Field(name);
+            return v.ValueKind == JsonValueKind.Number ? v.GetUInt64()
+                 : v.ValueKind == JsonValueKind.String && ulong.TryParse(v.GetString(), out ulong x) ? x : 0;
+        }
+
+        public byte[] Bytes(string name, int field) => proto != null ? proto.Bytes(field)
+            : Field(name) is { ValueKind: JsonValueKind.String } v ? Convert.FromBase64String(v.GetString() ?? "") : [];
+
+        public HashSet<int> ConfirmationTypes(string name, int field) => proto != null
+            ? proto.Messages(field).Select(m => (int)m.UInt(1)).ToHashSet()
+            : Field(name) is { ValueKind: JsonValueKind.Array } a
+                ? a.EnumerateArray().Select(c => c.TryGetProperty("confirmation_type", out var t) && t.TryGetInt32(out int i) ? i : 0).ToHashSet()
+                : [];
+    }
+
+    /// <summary>Запрос к api.steampowered.com: один повтор, если сервер оборвал ответ
+    /// (так бывает со старым keep-alive соединением).</summary>
+    private async Task<ApiResult> ApiAsync(Func<HttpRequestMessage> make, CancellationToken ct)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            using var req = make();
+            ApiHeaders(req);
+            HttpResponseMessage resp;
+            try
             {
-                Content = new MultipartFormDataContent { { new StringContent(encoded), "input_protobuf_encoded" } },
-            };
-        req.Headers.Add("Cookie", MobileCookies);
-        using var resp = await SendAsync(req, ct);
-        if (!resp.IsSuccessStatusCode) throw new SteamException($"Steam ответил {(int)resp.StatusCode}");
-        int eresult = resp.Headers.TryGetValues("x-eresult", out var er) && int.TryParse(er.FirstOrDefault(), out int e) ? e : 1;
-        if (eresult != 1) throw new SteamException(DescribeEResult(eresult), eresult: eresult);
-        return ProtoMessage.Parse(await resp.Content.ReadAsByteArrayAsync(ct));
+                resp = await _http.SendAsync(req, ct);
+            }
+            catch (HttpRequestException e) when (attempt == 0 && e.HttpRequestError is HttpRequestError.ResponseEnded
+                                                     or HttpRequestError.ConnectionError)
+            {
+                await _delay(TimeSpan.FromMilliseconds(500), ct);
+                continue;
+            }
+            catch (HttpRequestException e)
+            {
+                throw NetworkError(req.RequestUri?.Host, e);
+            }
+            catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw TimeoutError(req.RequestUri?.Host);
+            }
+            using (resp)
+            {
+                if (!resp.IsSuccessStatusCode) throw new SteamException($"Steam ответил {(int)resp.StatusCode}");
+                int eresult = resp.Headers.TryGetValues("x-eresult", out var er) && int.TryParse(er.FirstOrDefault(), out int e) ? e : 1;
+                if (eresult != 1) throw new SteamException(DescribeEResult(eresult), eresult: eresult);
+                byte[] body = await resp.Content.ReadAsByteArrayAsync(ct);
+                string? type = resp.Content.Headers.ContentType?.MediaType;
+                if (type is "application/json" || (body.Length > 0 && body[0] == (byte)'{'))
+                {
+                    using var doc = JsonDocument.Parse(body);
+                    return new ApiResult(null, doc.RootElement.Clone());
+                }
+                return new ApiResult(ProtoMessage.Parse(body), default);
+            }
+        }
+    }
+
+    private static string Url(string method) => $"{Api}/IAuthenticationService/{method}/v1/";
+
+    /// <summary>Метод с телом protobuf (input_protobuf_encoded), как у steam-session и aiosteampy.</summary>
+    private Task<ApiResult> CallAsync(string method, ProtoWriter body, CancellationToken ct)
+    {
+        string encoded = Convert.ToBase64String(body.ToArray());
+        return ApiAsync(() => new HttpRequestMessage(HttpMethod.Post, Url(method))
+        {
+            Content = new FormUrlEncodedContent([new("input_protobuf_encoded", encoded)]),
+        }, ct);
+    }
+
+    /// <summary>Метод с обычными полями формы.</summary>
+    private Task<ApiResult> FormAsync(string method, IEnumerable<KeyValuePair<string, string>> fields, CancellationToken ct)
+    {
+        var list = fields.ToList();
+        return ApiAsync(() => new HttpRequestMessage(HttpMethod.Post, Url(method)) { Content = new FormUrlEncodedContent(list) }, ct);
     }
 
     private static string DescribeEResult(int e) => e switch
@@ -185,14 +273,19 @@ public sealed class SteamWeb : ISteamWeb, IDisposable
 
     public async Task<SteamSession> LoginAsync(string account, string password, Func<Task<string>> guardCode, CancellationToken ct = default)
     {
-        var rsa = await CallAsync("GetPasswordRSAPublicKey", new ProtoWriter().String(1, account), get: true, ct);
+        // ключ RSA — простым GET с account_name (ответ JSON), как в aiosteampy
+        var rsa = await ApiAsync(() => new HttpRequestMessage(HttpMethod.Get,
+            $"{Url("GetPasswordRSAPublicKey")}?account_name={Uri.EscapeDataString(account)}"), ct);
+        string mod = rsa.Str("publickey_mod", 1), exp = rsa.Str("publickey_exp", 2);
+        ulong keyTime = rsa.UInt("timestamp", 3);
+        if (mod.Length == 0 || exp.Length == 0) throw new SteamException("Steam не выдал ключ для пароля. Проверьте логин.");
         string encrypted;
         using (var key = RSA.Create())
         {
             key.ImportParameters(new RSAParameters
             {
-                Modulus = Convert.FromHexString(rsa.String(1)),
-                Exponent = Convert.FromHexString(rsa.String(2)),
+                Modulus = Convert.FromHexString(mod),
+                Exponent = Convert.FromHexString(exp),
             });
             encrypted = Convert.ToBase64String(key.Encrypt(Encoding.UTF8.GetBytes(password), RSAEncryptionPadding.Pkcs1));
         }
@@ -203,21 +296,26 @@ public sealed class SteamWeb : ISteamWeb, IDisposable
             .String(1, "HapasVault")
             .String(2, account)
             .String(3, encrypted)
-            .UInt(4, rsa.UInt(3))
+            .UInt(4, keyTime)
             .Bool(5, true)
             .UInt(6, 3)                 // k_EAuthTokenPlatformType_MobileApp
             .UInt(7, 1)                 // k_ESessionPersistence_Persistent
             .String(8, "Mobile")
-            .Message(9, device), get: false, ct);
+            .Message(9, device), ct);
 
-        ulong clientId = begin.UInt(1), steamId = begin.UInt(5);
-        byte[] requestId = begin.Bytes(2);
-        var allowed = begin.Messages(4).Select(m => (int)m.UInt(1)).ToHashSet();
+        ulong clientId = begin.UInt("client_id", 1), steamId = begin.UInt("steamid", 5);
+        byte[] requestId = begin.Bytes("request_id", 2);
+        var allowed = begin.ConfirmationTypes("allowed_confirmations", 4);
+        if (clientId == 0 || requestId.Length == 0) throw new SteamException("Steam не начал вход. Попробуйте позже.");
         if (allowed.Contains(3))        // k_EAuthSessionGuardType_DeviceCode — код Steam Guard
         {
             string code = await guardCode();
-            await CallAsync("UpdateAuthSessionWithSteamGuardCode", new ProtoWriter()
-                .UInt(1, clientId).Fixed64(2, steamId).String(3, code).UInt(4, 3), get: false, ct);
+            // обычными полями формы, как в aiosteampy
+            await FormAsync("UpdateAuthSessionWithSteamGuardCode",
+            [
+                new("client_id", clientId.ToString()), new("steamid", steamId.ToString()),
+                new("code", code), new("code_type", "3"),
+            ], ct);
         }
         else if (!allowed.Contains(1))  // k_EAuthSessionGuardType_None
         {
@@ -227,11 +325,11 @@ public sealed class SteamWeb : ISteamWeb, IDisposable
 
         for (int attempt = 0; attempt < 10; attempt++)
         {
-            var poll = await CallAsync("PollAuthSessionStatus", new ProtoWriter().UInt(1, clientId).Bytes(2, requestId), get: false, ct);
-            if (poll.UInt(1) != 0) clientId = poll.UInt(1);
-            string refresh = poll.String(3);
+            var poll = await CallAsync("PollAuthSessionStatus", new ProtoWriter().UInt(1, clientId).Bytes(2, requestId), ct);
+            if (poll.UInt("new_client_id", 1) is ulong nc and not 0) clientId = nc;
+            string refresh = poll.Str("refresh_token", 3);
             if (refresh.Length > 0)
-                return new SteamSession(steamId, refresh, poll.String(4), _clock());
+                return new SteamSession(steamId, refresh, poll.Str("access_token", 4), _clock());
             await _delay(TimeSpan.FromSeconds(1), ct);
         }
         throw new SteamException("Steam не завершил вход. Попробуйте ещё раз.");
@@ -239,18 +337,18 @@ public sealed class SteamWeb : ISteamWeb, IDisposable
 
     public async Task<SteamSession> RefreshAsync(SteamSession s, CancellationToken ct = default)
     {
-        ProtoMessage r;
+        ApiResult r;
         try
         {
             r = await CallAsync("GenerateAccessTokenForApp", new ProtoWriter()
-                .String(1, s.RefreshToken).Fixed64(2, s.SteamId).UInt(3, 1), get: false, ct);
+                .String(1, s.RefreshToken).Fixed64(2, s.SteamId).UInt(3, 1), ct);
         }
         catch (SteamException e) when (e.EResult != 0)
         {
             throw new SteamException("Сессия Steam истекла — нужен вход заново.", needsLogin: true, eresult: e.EResult);
         }
-        string refresh = r.String(2);
-        return s with { AccessToken = r.String(1), AccessTokenAt = _clock(), RefreshToken = refresh.Length > 0 ? refresh : s.RefreshToken };
+        string refresh = r.Str("refresh_token", 2);
+        return s with { AccessToken = r.Str("access_token", 1), AccessTokenAt = _clock(), RefreshToken = refresh.Length > 0 ? refresh : s.RefreshToken };
     }
 
     // ---------------- mobileconf ----------------
