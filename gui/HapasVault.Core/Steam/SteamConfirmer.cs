@@ -53,6 +53,8 @@ public sealed class FileSteamSessionStore(string folder, Func<byte[], byte[]> pr
 public sealed class SteamConfirmer(ITokenClient token, uint entryId, ISteamWeb web, ISteamSessionStore store)
 {
     private SteamSession? _session;
+    // по одной операции: обновление сессии меняет refresh token, параллельный запрос получил бы старый
+    private readonly SemaphoreSlim _gate = new(1, 1);
 
     public uint EntryId => entryId;
     public bool HasSession => (_session ??= store.Load(entryId)) != null;
@@ -79,6 +81,19 @@ public sealed class SteamConfirmer(ITokenClient token, uint entryId, ISteamWeb w
 
     /// <summary>Выполнить с действующей сессией; истекла — один раз войти заново.</summary>
     private async Task<T> WithSessionAsync<T>(Func<SteamSession, Task<T>> op, CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            return await WithSessionLockedAsync(op, ct);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<T> WithSessionLockedAsync<T>(Func<SteamSession, Task<T>> op, CancellationToken ct)
     {
         for (int attempt = 0; ; attempt++)
         {
