@@ -188,9 +188,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force review | Out-Null
-          Copy-Item screenshots/10-vault.jpg, screenshots/11b-steam.jpg, screenshots/13-log.jpg review/ -ErrorAction SilentlyContinue
+          Get-ChildItem screenshots | Select-Object -ExpandProperty Name
+          Copy-Item screenshots/10-vault.*, screenshots/11b-steam.*, screenshots/13-log.* review/
           git config user.name "ci"; git config user.email "ci@example.invalid"
-          git add review; git commit -m "review screenshots [skip ci]"; git push origin HEAD:${{ github.ref_name }}
+          git add -f review; git commit -m "review screenshots [skip ci]"; git push origin HEAD:${{ github.ref_name }}
 
       - name: Upload screenshots
         if: always()
