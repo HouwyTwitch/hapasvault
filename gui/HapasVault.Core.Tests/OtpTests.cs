@@ -46,11 +46,12 @@ public class OtpParseTests
         byte[] raw = "steam-test-secret-12"u8.ToArray();
         string b64 = Convert.ToBase64String(raw);
         Assert.Equal(raw, OtpSecret.Parse(b64, OtpKind.Steam).Secret);
-        var ma = OtpSecret.Parse($$"""{"shared_secret":"{{b64}}","account_name":"ivan_gamer","identity_secret":"x"}""", OtpKind.None);
+        var ma = OtpSecret.Parse($$"""{"shared_secret":"{{b64}}","account_name":"ivan_gamer","identity_secret":"{{b64}}"}""", OtpKind.None);
         Assert.Equal((OtpKind.Steam, "ivan_gamer"), (ma.Kind, ma.Account));
+        Assert.Equal(raw, ma.Mobile!.IdentitySecret);
         Assert.Equal(OtpKind.Steam, OtpSecret.Parse("steam://" + Rfc, OtpKind.None).Kind);
         Assert.Equal(OtpKind.Steam, OtpSecret.Parse($"otpauth://totp/Steam:ivan?secret={Rfc}&encoder=steam", OtpKind.None).Kind);
-        Assert.Equal([2, 1, 5, 30], ma.ToBlob()[..4]);
+        Assert.Equal([3, 1, 5, 30], ma.ToBlob()[..4]);
     }
 
     [Theory]

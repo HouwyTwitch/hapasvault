@@ -24,7 +24,7 @@
 #ifndef PM_PROTO_H
 #define PM_PROTO_H
 
-#define PM_PROTO_VERSION   2   /* 2: OTP, UPDATE, тип OTP в LIST */
+#define PM_PROTO_VERSION   3   /* 3: подтверждения Steam; 2: OTP, UPDATE, тип OTP в LIST */
 
 /* Типы кадров */
 #define FR_PAIR    0x01
@@ -52,6 +52,8 @@
 #define CMD_DELETE        0x43  /* [u32 id] -> ok */
 #define CMD_UPDATE        0x44  /* [u32 id][str cat][str name][str login][pw password][u8 mode][otp если mode=1] -> ok */
 #define CMD_OTP           0x45  /* [u32 id][u64 unix_time] -> [u8 type][u8 period][str code] */
+#define CMD_STEAM_CONF    0x46  /* [u32 id][u64 unix_time][u8 n][tag n] -> [key 20] (HMAC identity_secret) */
+#define CMD_STEAM_INFO    0x47  /* [u32 id][u8 flags] -> [u64 steamid][u8 n][revocation n, если flags&1] */
 #define CMD_LOG           0x50  /* -> [u8 n] n * {u32 uptime_s, u8 cmd, u8 status, u32 id} */
 #define CMD_BACKUP        0x51  /* -> зашифрованный блоб хранилища как есть */
 #define CMD_FACTORY_RESET 0x60  /* (только открытое) -> ok, стирает всё, включая сопряжение */

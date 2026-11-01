@@ -1,0 +1,282 @@
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+
+namespace HapasVault.Core.Steam;
+
+/// <summary>
+/// Сессия Steam на этом ПК. Refresh token — временный (месяцы), обновляется и сам по себе
+/// ничего не подтверждает: ключи подтверждений считает токен из identity_secret.
+/// </summary>
+public sealed record SteamSession(ulong SteamId, string RefreshToken, string? AccessToken = null,
+                                  DateTimeOffset AccessTokenAt = default, string? DeviceId = null)
+{
+    public string Device => DeviceId ?? SteamWeb.DeviceIdFor(SteamId);
+}
+
+public static class SteamConfirmationTypes
+{
+    public const int Trade = 2, MarketListing = 3, AccountRecovery = 6, ApiKey = 9;
+}
+
+public sealed record SteamConfirmation(
+    string Id, string Nonce, int Type, string TypeName, string Headline, IReadOnlyList<string> Summary,
+    string? Icon, DateTimeOffset Created, string? AcceptText, string? CancelText, ulong CreatorId);
+
+/// <summary>Ключ подтверждения по (время, тег) — его считает токен.</summary>
+public delegate Task<byte[]> SteamKeySource(long unixTime, string tag);
+
+public sealed class SteamException(string message, bool needsLogin = false, int eresult = 0) : Exception(message)
+{
+    /// <summary>Сессия недействительна — нужен вход заново.</summary>
+    public bool NeedsLogin { get; } = needsLogin;
+    public int EResult { get; } = eresult;
+}
+
+public interface ISteamWeb
+{
+    /// <summary>Вход как мобильное приложение. guardCode — код Steam Guard (его считает токен).</summary>
+    Task<SteamSession> LoginAsync(string account, string password, Func<Task<string>> guardCode, CancellationToken ct = default);
+    /// <summary>Свежий access token (и, если Steam выдаст, новый refresh token — старый перестаёт работать).</summary>
+    Task<SteamSession> RefreshAsync(SteamSession session, CancellationToken ct = default);
+    /// <summary>Обновить access token, если он старше 10 минут. Результат нужно сохранить.</summary>
+    Task<SteamSession> EnsureFreshAsync(SteamSession session, CancellationToken ct = default);
+    Task<IReadOnlyList<SteamConfirmation>> ListAsync(SteamSession session, SteamKeySource key, CancellationToken ct = default);
+    Task RespondAsync(SteamSession session, SteamKeySource key, IReadOnlyList<SteamConfirmation> items, bool accept,
+                      CancellationToken ct = default);
+}
+
+/// <summary>
+/// Steam Web: IAuthenticationService (вход, обновление токена) и mobileconf (подтверждения),
+/// так же, как это делает официальное мобильное приложение.
+/// </summary>
+public sealed class SteamWeb : ISteamWeb, IDisposable
+{
+    public const string Api = "https://api.steampowered.com";
+    public const string Community = "https://steamcommunity.com";
+    private const string MobileCookies = "mobileClient=android; mobileClientVersion=777777 3.10.3";
+
+    private readonly HttpClient _http;
+    private readonly Func<DateTimeOffset> _clock;
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+
+    public SteamWeb(HttpMessageHandler? handler = null, Func<DateTimeOffset>? clock = null,
+                    Func<TimeSpan, CancellationToken, Task>? delay = null)
+    {
+        _http = new HttpClient(handler ?? new HttpClientHandler { UseCookies = false }) { Timeout = TimeSpan.FromSeconds(20) };
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("okhttp/4.9.2");
+        _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _delay = delay ?? Task.Delay;
+    }
+
+    public void Dispose() => _http.Dispose();
+
+    /// <summary>Идентификатор устройства, как у steam-totp/SDA: android:<sha1(steamid) в виде GUID>.</summary>
+    public static string DeviceIdFor(ulong steamId)
+    {
+        string h = Convert.ToHexString(SHA1.HashData(Encoding.ASCII.GetBytes(steamId.ToString()))).ToLowerInvariant();
+        return $"android:{h[..8]}-{h[8..12]}-{h[12..16]}-{h[16..20]}-{h[20..32]}";
+    }
+
+    // ---------------- IAuthenticationService ----------------
+
+    private async Task<ProtoMessage> CallAsync(string method, ProtoWriter body, bool get, CancellationToken ct)
+    {
+        string url = $"{Api}/IAuthenticationService/{method}/v1/";
+        string encoded = Convert.ToBase64String(body.ToArray());
+        using var req = get
+            ? new HttpRequestMessage(HttpMethod.Get, $"{url}?input_protobuf_encoded={Uri.EscapeDataString(encoded)}&origin=SteamMobile")
+            : new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new MultipartFormDataContent { { new StringContent(encoded), "input_protobuf_encoded" } },
+            };
+        req.Headers.Add("Cookie", MobileCookies);
+        using var resp = await _http.SendAsync(req, ct);
+        if (!resp.IsSuccessStatusCode) throw new SteamException($"Steam ответил {(int)resp.StatusCode}");
+        int eresult = resp.Headers.TryGetValues("x-eresult", out var er) && int.TryParse(er.FirstOrDefault(), out int e) ? e : 1;
+        if (eresult != 1) throw new SteamException(DescribeEResult(eresult), eresult: eresult);
+        return ProtoMessage.Parse(await resp.Content.ReadAsByteArrayAsync(ct));
+    }
+
+    private static string DescribeEResult(int e) => e switch
+    {
+        5 => "Steam: неверный логин или пароль.",
+        65 => "Steam: неверный код Steam Guard. Проверьте время на компьютере.",
+        84 => "Steam: слишком много попыток входа, подождите.",
+        88 => "Steam: неверный код Steam Guard.",
+        _ => $"Steam: ошибка входа (EResult {e}).",
+    };
+
+    public async Task<SteamSession> LoginAsync(string account, string password, Func<Task<string>> guardCode, CancellationToken ct = default)
+    {
+        var rsa = await CallAsync("GetPasswordRSAPublicKey", new ProtoWriter().String(1, account), get: true, ct);
+        string encrypted;
+        using (var key = RSA.Create())
+        {
+            key.ImportParameters(new RSAParameters
+            {
+                Modulus = Convert.FromHexString(rsa.String(1)),
+                Exponent = Convert.FromHexString(rsa.String(2)),
+            });
+            encrypted = Convert.ToBase64String(key.Encrypt(Encoding.UTF8.GetBytes(password), RSAEncryptionPadding.Pkcs1));
+        }
+
+        // платформа MobileApp: refresh token обновляется через GenerateAccessTokenForApp
+        var device = new ProtoWriter().String(1, "HapasVault").UInt(2, 3).Int(3, -500).UInt(4, 528);
+        var begin = await CallAsync("BeginAuthSessionViaCredentials", new ProtoWriter()
+            .String(1, "HapasVault")
+            .String(2, account)
+            .String(3, encrypted)
+            .UInt(4, rsa.UInt(3))
+            .Bool(5, true)
+            .UInt(6, 3)                 // k_EAuthTokenPlatformType_MobileApp
+            .UInt(7, 1)                 // k_ESessionPersistence_Persistent
+            .String(8, "Mobile")
+            .Message(9, device), get: false, ct);
+
+        ulong clientId = begin.UInt(1), steamId = begin.UInt(5);
+        byte[] requestId = begin.Bytes(2);
+        var allowed = begin.Messages(4).Select(m => (int)m.UInt(1)).ToHashSet();
+        if (allowed.Contains(3))        // k_EAuthSessionGuardType_DeviceCode — код Steam Guard
+        {
+            string code = await guardCode();
+            await CallAsync("UpdateAuthSessionWithSteamGuardCode", new ProtoWriter()
+                .UInt(1, clientId).Fixed64(2, steamId).String(3, code).UInt(4, 3), get: false, ct);
+        }
+        else if (!allowed.Contains(1))  // k_EAuthSessionGuardType_None
+        {
+            throw new SteamException("Steam просит подтверждение, которое токен дать не может (код из письма). " +
+                                     "Для подтверждений нужен мобильный аутентификатор, привязанный к этим секретам.");
+        }
+
+        for (int attempt = 0; attempt < 10; attempt++)
+        {
+            var poll = await CallAsync("PollAuthSessionStatus", new ProtoWriter().UInt(1, clientId).Bytes(2, requestId), get: false, ct);
+            if (poll.UInt(1) != 0) clientId = poll.UInt(1);
+            string refresh = poll.String(3);
+            if (refresh.Length > 0)
+                return new SteamSession(steamId, refresh, poll.String(4), _clock());
+            await _delay(TimeSpan.FromSeconds(1), ct);
+        }
+        throw new SteamException("Steam не завершил вход. Попробуйте ещё раз.");
+    }
+
+    public async Task<SteamSession> RefreshAsync(SteamSession s, CancellationToken ct = default)
+    {
+        ProtoMessage r;
+        try
+        {
+            r = await CallAsync("GenerateAccessTokenForApp", new ProtoWriter()
+                .String(1, s.RefreshToken).Fixed64(2, s.SteamId).UInt(3, 1), get: false, ct);
+        }
+        catch (SteamException e) when (e.EResult != 0)
+        {
+            throw new SteamException("Сессия Steam истекла — нужен вход заново.", needsLogin: true, eresult: e.EResult);
+        }
+        string refresh = r.String(2);
+        return s with { AccessToken = r.String(1), AccessTokenAt = _clock(), RefreshToken = refresh.Length > 0 ? refresh : s.RefreshToken };
+    }
+
+    // ---------------- mobileconf ----------------
+
+    private string Cookies(SteamSession s) =>
+        $"{MobileCookies}; Steam_Language=russian; sessionid={Convert.ToHexString(RandomNumberGenerator.GetBytes(12)).ToLowerInvariant()}; " +
+        $"steamLoginSecure={Uri.EscapeDataString($"{s.SteamId}||{s.AccessToken}")}";
+
+    private async Task<List<KeyValuePair<string, string>>> ParamsAsync(SteamSession s, SteamKeySource key, string tag)
+    {
+        long t = _clock().ToUnixTimeSeconds();
+        byte[] k = await key(t, tag);
+        return
+        [
+            new("p", s.Device), new("a", s.SteamId.ToString()), new("k", Convert.ToBase64String(k)),
+            new("t", t.ToString()), new("m", "react"), new("tag", tag),
+        ];
+    }
+
+    private static string Query(IEnumerable<KeyValuePair<string, string>> p) =>
+        string.Join("&", p.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
+
+    private async Task<JsonElement> SendConfAsync(SteamSession s, HttpRequestMessage req, CancellationToken ct)
+    {
+        req.Headers.Add("Cookie", Cookies(s));
+        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        using var resp = await _http.SendAsync(req, ct);
+        if ((int)resp.StatusCode is 401 or 403) throw new SteamException("Сессия Steam истекла.", needsLogin: true);
+        if (!resp.IsSuccessStatusCode) throw new SteamException($"steamcommunity.com ответил {(int)resp.StatusCode}");
+        string body = await resp.Content.ReadAsStringAsync(ct);
+        JsonElement json;
+        try
+        {
+            json = JsonDocument.Parse(body).RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            // без сессии Steam отдаёт HTML страницы входа
+            throw new SteamException("Steam вернул страницу входа — сессия истекла.", needsLogin: true);
+        }
+        if (json.TryGetProperty("needauth", out var na) && na.ValueKind == JsonValueKind.True)
+            throw new SteamException("Сессия Steam истекла.", needsLogin: true);
+        if (!json.TryGetProperty("success", out var ok) || ok.ValueKind != JsonValueKind.True)
+            throw new SteamException(json.TryGetProperty("message", out var m) && m.GetString() is { Length: > 0 } msg
+                ? "Steam: " + msg
+                : "Steam отклонил запрос. Проверьте время на компьютере.");
+        return json;
+    }
+
+    public async Task<SteamSession> EnsureFreshAsync(SteamSession s, CancellationToken ct = default) =>
+        s.AccessToken is { Length: > 0 } && _clock() - s.AccessTokenAt < TimeSpan.FromMinutes(10) ? s : await RefreshAsync(s, ct);
+
+    private static void RequireAccess(SteamSession s)
+    {
+        if (s.AccessToken is not { Length: > 0 }) throw new SteamException("Нет сессии Steam.", needsLogin: true);
+    }
+
+    public async Task<IReadOnlyList<SteamConfirmation>> ListAsync(SteamSession s, SteamKeySource key, CancellationToken ct = default)
+    {
+        RequireAccess(s);
+        var p = await ParamsAsync(s, key, "list");
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"{Community}/mobileconf/getlist?{Query(p)}");
+        var json = await SendConfAsync(s, req, ct);
+        var list = new List<SteamConfirmation>();
+        if (!json.TryGetProperty("conf", out var conf) || conf.ValueKind != JsonValueKind.Array) return list;
+        foreach (var c in conf.EnumerateArray())
+        {
+            string Str(string n) => c.TryGetProperty(n, out var v) ? v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : v.ToString() : "";
+            var summary = c.TryGetProperty("summary", out var sm) && sm.ValueKind == JsonValueKind.Array
+                ? sm.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList()
+                : new List<string>();
+            list.Add(new SteamConfirmation(
+                Str("id"), Str("nonce"), c.TryGetProperty("type", out var ty) && ty.TryGetInt32(out int t) ? t : 0,
+                Str("type_name"), Str("headline"), summary, Str("icon") is { Length: > 0 } ic ? ic : null,
+                DateTimeOffset.FromUnixTimeSeconds(c.TryGetProperty("creation_time", out var ctm) && ctm.TryGetInt64(out long tt) ? tt : 0),
+                Str("accept") is { Length: > 0 } a ? a : null, Str("cancel") is { Length: > 0 } cn ? cn : null,
+                ulong.TryParse(Str("creator_id"), out ulong cr) ? cr : 0));
+        }
+        return list;
+    }
+
+    public async Task RespondAsync(SteamSession s, SteamKeySource key, IReadOnlyList<SteamConfirmation> items, bool accept,
+                                   CancellationToken ct = default)
+    {
+        if (items.Count == 0) return;
+        RequireAccess(s);
+        string op = accept ? "allow" : "cancel";
+        var p = await ParamsAsync(s, key, op);
+        p.Insert(0, new("op", op));
+        HttpRequestMessage req;
+        if (items.Count == 1)
+        {
+            p.Add(new("cid", items[0].Id));
+            p.Add(new("ck", items[0].Nonce));
+            req = new HttpRequestMessage(HttpMethod.Get, $"{Community}/mobileconf/ajaxop?{Query(p)}");
+        }
+        else
+        {
+            foreach (var c in items) { p.Add(new("cid[]", c.Id)); p.Add(new("ck[]", c.Nonce)); }
+            req = new HttpRequestMessage(HttpMethod.Post, $"{Community}/mobileconf/multiajaxop") { Content = new FormUrlEncodedContent(p) };
+        }
+        using (req) await SendConfAsync(s, req, ct);
+    }
+}

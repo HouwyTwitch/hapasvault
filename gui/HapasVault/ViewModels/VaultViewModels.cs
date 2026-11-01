@@ -205,6 +205,7 @@ public sealed partial class VaultViewModel(ShellViewModel shell) : ObservableObj
             uint? id = await Shell.RunAsync(() => Shell.Token.AddAsync(ed.Category.Trim(), ed.Name.Trim(), ed.Login.Trim(), ed.Password,
                 change == OtpChange.Set ? secret : null));
             if (id == null) return false;
+            if (change == OtpChange.Set && secret?.Mobile is { } m) Core.Steam.SteamConfirmer.Import(Shell.SteamSessions, id.Value, m);
             await LoadAsync(id);
             Shell.Snackbar.Show($"«{ed.Name.Trim()}» сохранена на токене");
             return true;
@@ -221,6 +222,9 @@ public sealed partial class VaultViewModel(ShellViewModel shell) : ObservableObj
             if (!await Shell.RunAsync(() => Shell.Token.UpdateAsync(e.Id, ed.Category.Trim(), ed.Name.Trim(), ed.Login.Trim(), ed.Password,
                     change, secret)))
                 return false;
+            // новые секреты Steam или их удаление — старая сессия ПК больше не к месту
+            if (change != OtpChange.Keep) Shell.SteamSessions.Delete(e.Id);
+            if (change == OtpChange.Set && secret?.Mobile is { } m) Core.Steam.SteamConfirmer.Import(Shell.SteamSessions, e.Id, m);
             await LoadAsync(e.Id);
             Shell.Snackbar.Show("Изменения сохранены");
             return true;
@@ -254,6 +258,7 @@ public sealed partial class VaultViewModel(ShellViewModel shell) : ObservableObj
         var copy = await Shell.RunAsync(() => Shell.Token.GetAsync(e.Id));
         if (copy == null) return;
         if (!await Shell.RunAsync(() => Shell.Token.DeleteAsync(e.Id))) return;
+        Shell.SteamSessions.Delete(e.Id);
         Selected = null;
         await LoadAsync();
         var item = e.Item;
@@ -417,6 +422,19 @@ public sealed partial class DetailViewModel : ObservableObject
     [RelayCommand]
     private Task Delete() => _vault.DeleteAsync(Entry);
 
+    /// <summary>У записи есть identity_secret: обмены и площадку можно подтверждать.</summary>
+    public bool HasSteamConfirmations => Entry.Item.SteamConfirmations;
+
+    [RelayCommand]
+    private async Task OpenSteam()
+    {
+        var dialog = new SteamDialogViewModel(_vault.Shell, Entry);
+        var shown = _vault.Shell.ShowDialogAsync(dialog);
+        await dialog.LoadAsync();
+        await shown;
+        dialog.Dispose();
+    }
+
     [RelayCommand]
     private void Close() => _vault.Selected = null;
 }
@@ -464,7 +482,7 @@ public sealed partial class EditorDialogViewModel : DialogViewModel
 
     public bool OtpVisible => OtpChoice != OtpKind.None;
     public string OtpHint => OtpChoice == OtpKind.Steam
-        ? "shared_secret из maFile, сам maFile или steam:// — код Steam Guard будет считать токен"
+        ? "Весь maFile — код входа и подтверждения обменов (identity_secret останется на токене); или shared_secret / steam://"
         : ExistingOtp != OtpKind.None
             ? "Оставьте пустым, чтобы сохранить текущий секрет. Новый — otpauth:// или Base32"
             : "Ссылка otpauth:// из QR-кода или секрет Base32 из настроек 2FA сервиса";

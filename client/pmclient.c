@@ -495,6 +495,47 @@ int pmc_otp(pm_client *c, uint32_t id, uint64_t unix_time, char *code, size_t ca
     return 0;
 }
 
+int pmc_steam_conf(pm_client *c, uint32_t id, uint64_t unix_time, const char *tag, uint8_t key[20])
+{
+    size_t tl = strlen(tag);
+    if (!pm_steam_tag_ok((const uint8_t *)tag, tl)) return ST_BAD_ARGS;
+    uint8_t req[14 + STEAM_TAG_MAX] = {CMD_STEAM_CONF};
+    wire_put32(req + 1, id);
+    wire_put32(req + 5, (uint32_t)unix_time);
+    wire_put32(req + 9, (uint32_t)(unix_time >> 32));
+    req[13] = (uint8_t)tl;
+    memcpy(req + 14, tag, tl);
+    const uint8_t *d;
+    size_t n;
+    int st = request(c, req, 14 + tl, &d, &n);
+    if (st != ST_OK) return st;
+    if (n != STEAM_CONF_KEY) return PMC_E_PROTO;
+    memcpy(key, d, STEAM_CONF_KEY);
+    crypto_wipe(c->plain, sizeof c->plain);
+    return 0;
+}
+
+int pmc_steam_info(pm_client *c, uint32_t id, uint64_t *steamid, char *revocation, size_t cap)
+{
+    uint8_t req[6] = {CMD_STEAM_INFO};
+    wire_put32(req + 1, id);
+    req[5] = revocation ? 1 : 0;
+    const uint8_t *d;
+    size_t n;
+    int st = request(c, req, sizeof req, &d, &n);
+    if (st != ST_OK) return st;
+    wire_r r = {d, n, 0};
+    uint64_t sid = wire_u64(&r);
+    if (revocation) {
+        if (cap == 0) return PMC_E_BUF;
+        copy_str(&r, revocation, cap, 1);
+    }
+    crypto_wipe(c->plain, sizeof c->plain);
+    if (r.err) return PMC_E_PROTO;
+    *steamid = sid;
+    return 0;
+}
+
 int pmc_delete(pm_client *c, uint32_t id)
 {
     uint8_t req[5] = {CMD_DELETE};

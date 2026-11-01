@@ -66,6 +66,11 @@ static inline void wire_put_u32(wire_w *w, uint32_t v)
     wire_put32(b, v);
     wire_put_bytes(w, b, 4);
 }
+static inline void wire_put_u64(wire_w *w, uint64_t v)
+{
+    wire_put_u32(w, (uint32_t)v);
+    wire_put_u32(w, (uint32_t)(v >> 32));
+}
 /* Строка [u8 len][bytes] */
 static inline void wire_put_str(wire_w *w, const char *s)
 {

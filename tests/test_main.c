@@ -81,9 +81,11 @@ static int memfind(const uint8_t *hay, size_t n, const void *needle, size_t m)
 }
 
 static int g_log_n, g_log_wrong;
+static uint8_t g_log_cmd[64];
 static void log_cb(void *ctx, uint32_t t, uint8_t cmd, uint8_t st, uint32_t id)
 {
     (void)ctx; (void)t; (void)id;
+    if (g_log_n < 64) g_log_cmd[g_log_n] = cmd;
     g_log_n++;
     if (cmd == CMD_UNLOCK && st == ST_WRONG_KEY) g_log_wrong++;
 }
@@ -541,6 +543,100 @@ static void test_otp_protocol(void)
     pmc_wipe(&c);
 }
 
+/* STEAM_MOBILE: [3][1][5][30][n][shared][m][identity][u64 steamid][r][revocation] */
+static size_t steam_blob(uint8_t *b, const char *shared, const char *identity, uint64_t sid, const char *rev)
+{
+    size_t n = 0, l;
+    b[n++] = OTP_STEAM_MOBILE; b[n++] = PM_SHA1; b[n++] = 5; b[n++] = 30;
+    l = strlen(shared);   b[n++] = (uint8_t)l; memcpy(b + n, shared, l); n += l;
+    l = strlen(identity); b[n++] = (uint8_t)l; memcpy(b + n, identity, l); n += l;
+    for (int i = 0; i < 8; i++) b[n++] = (uint8_t)(sid >> (8 * i));
+    l = strlen(rev);      b[n++] = (uint8_t)l; memcpy(b + n, rev, l); n += l;
+    return n;
+}
+
+static int hex_eq(const uint8_t *b, const char *hex)
+{
+    for (size_t i = 0; hex[2 * i]; i++) {
+        unsigned v;
+        if (sscanf(hex + 2 * i, "%2x", &v) != 1 || b[i] != v) return 0;
+    }
+    return 1;
+}
+
+static void test_steam_confirmations(void)
+{
+    pm_client c;
+    uint8_t kv[32], key[20];
+    char code[16], rev[32];
+    fresh_vault(&c, kv);
+
+    section("Steam: разбор параметров");
+    uint8_t b[OTP_BLOB_MAX];
+    size_t bl = steam_blob(b, "steam-test-secret-1234", "steam-identity-secret-01", 76561197960287930ull, "R12345");
+    CHECK(pm_otp_validate(b, bl) == 0, "валидный блок");
+    CHECK(bl <= OTP_BLOB_MAX, "влезает в OTP_BLOB_MAX");
+    b[bl - 1] = ' ';
+    CHECK(pm_otp_validate(b, bl) != 0, "непечатный код восстановления — отказ");
+    bl = steam_blob(b, "steam-test-secret-1234", "short", 1, "");
+    CHECK(pm_otp_validate(b, bl) != 0, "короткий identity_secret — отказ");
+    CHECK(pm_otp_validate(b, bl - 1) != 0, "обрезанный блок — отказ");
+    CHECK(pm_steam_tag_ok((const uint8_t *)"details123", 10) && !pm_steam_tag_ok((const uint8_t *)"Conf", 4) &&
+          !pm_steam_tag_ok((const uint8_t *)"", 0), "теги: [a-z0-9], 1..32");
+
+    section("Steam: ключи подтверждений считает токен");
+    bl = steam_blob(b, "steam-test-secret-1234", "steam-identity-secret-01", 76561197960287930ull, "R12345");
+    uint32_t id, totp;
+    CHECK_RC(pmc_add_otp(&c, "Игры", "Steam", "gamer", "pw", b, bl, &id), 0, "запись с подтверждениями");
+    uint8_t tb[40];
+    size_t tl = otp_blob(tb, OTP_TOTP, PM_SHA1, 6, 30, "12345678901234567890");
+    CHECK_RC(pmc_add_otp(&c, "", "Обычный TOTP", "", "", tb, tl, &totp), 0, "запись с TOTP");
+    memset(g_list_otp, 0xEE, sizeof g_list_otp);
+    pmc_list(&c, otp_cb, NULL);
+    CHECK(g_list_otp[id] == OTP_STEAM_MOBILE, "список: тип 3");
+    CHECK_RC(pmc_otp(&c, id, 1700000000, code, sizeof code, NULL, NULL), 0, "код входа");
+    CHECK(!strcmp(code, "T7WDC"), "код входа из shared_secret");
+    CHECK_RC(pmc_steam_conf(&c, id, 1700000000, "conf", key), 0, "ключ списка");
+    CHECK(hex_eq(key, "18d97b0ee4409ea0b28919293b68beac46afb3b6"), "conf: совпал с эталоном");
+    CHECK_RC(pmc_steam_conf(&c, id, 1700000000, "allow", key), 0, "ключ одобрения");
+    CHECK(hex_eq(key, "3a8d79b3d6a5bd02aa3db74bc3603e0c4c21a6ab"), "allow: совпал с эталоном");
+    CHECK_RC(pmc_steam_conf(&c, id, 1700000030, "details12345", key), 0, "ключ деталей");
+    CHECK(hex_eq(key, "d4d392d35e37e7de21aeb76aed7a49e58b023e84"), "details: совпал с эталоном");
+    CHECK_RC(pmc_steam_conf(&c, id, 1710000000, "allow", key), ST_BAD_TIME, "ключи «из будущего» — нет");
+    CHECK_RC(pmc_steam_conf(&c, totp, 1700000000, "conf", key), ST_NO_OTP, "у TOTP нет identity_secret");
+    CHECK_RC(pmc_steam_conf(&c, id, 1700000000, "Allow!", key), ST_BAD_ARGS, "тег с чужими символами");
+
+    section("Steam: SteamID и код восстановления");
+    uint64_t sid = 0;
+    CHECK_RC(pmc_steam_info(&c, id, &sid, NULL, 0), 0, "SteamID");
+    CHECK(sid == 76561197960287930ull, "SteamID верный");
+    CHECK_RC(pmc_steam_info(&c, id, &sid, rev, sizeof rev), 0, "код восстановления");
+    CHECK(!strcmp(rev, "R12345"), "код восстановления верный");
+    CHECK_RC(pmc_steam_info(&c, totp, &sid, NULL, 0), ST_NO_OTP, "у TOTP нет Steam");
+
+    section("Steam: журнал, лимит, секреты не видны");
+    int acts = 0;
+    g_log_n = 0;
+    pmc_log(&c, log_cb, NULL);
+    for (int i = 0; i < g_log_n; i++) acts += g_log_cmd[i] == CMD_STEAM_CONF;
+    CHECK(acts == 2, "в журнале одобрение и отклонённая попытка, без списка и деталей");
+    hal_sim_advance_ms(TOKEN_RATE_WINDOW_MS + 10);
+    int limited = 0;
+    for (unsigned i = 0; i <= TOKEN_STEAM_RATE_N; i++)
+        if (pmc_steam_conf(&c, id, 1700000000, "conf", key) == ST_RATE_LIMIT) limited = 1;
+    CHECK(limited, "не больше 30 ключей в минуту");
+    const uint8_t *fl = hal_sim_flash();
+    CHECK(!memfind(fl, STORE_TOTAL_BYTES, "steam-identity", 14), "identity_secret не виден в flash");
+    uint32_t id2;
+    uint8_t up[OTP_BLOB_MAX];
+    size_t ul = steam_blob(up, "steam-test-secret-1234", "steam-identity-secret-02", 7, "R99999");
+    CHECK_RC(pmc_update(&c, id, "Игры", "Steam", "gamer", "pw", PMC_OTP_SET, up, ul), 0, "замена секретов");
+    CHECK_RC(pmc_steam_info(&c, id, &sid, NULL, 0), 0, "после замены");
+    CHECK(sid == 7, "новый SteamID");
+    CHECK_RC(pmc_add_otp(&c, "", "x", "", "", up, ul, &id2), 0, "вторая запись");
+    pmc_wipe(&c);
+}
+
 static void test_framer(void)
 {
     section("сборка кадров из потока (USB CDC)");
@@ -679,6 +775,7 @@ int main(int argc, char **argv)
     test_otp_protocol();
     test_security_hardening();
     test_framer();
+    test_steam_confirmations();
     if (argc > 1 && !strcmp(argv[1], "--argon")) test_real_argon_cost();
     printf("\nИтого: %d пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

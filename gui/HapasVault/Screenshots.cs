@@ -128,6 +128,22 @@ internal static class Screenshots
             return Task.CompletedTask;
         });
 
+        // подтверждения Steam: демо-Steam, ключи — от (демо-)токена; принять одно, список обновился
+        await Shot("11b-steam", async () =>
+        {
+            shell.Dialog?.Close(false);
+            await Settle();
+            var vault = vaultShell!.Vault;
+            vault.Selected = vault.Groups[1].Items[0];
+            if (vault.Detail?.HasSteamConfirmations != true) throw new InvalidOperationException("у Steam нет подтверждений");
+            _ = vault.Detail.OpenSteamCommand.ExecuteAsync(null);
+            for (int i = 0; i < 50 && (shell.Dialog is not SteamDialogViewModel d || d.IsLoading); i++) await Task.Delay(100);
+            var steam = (SteamDialogViewModel)shell.Dialog!;
+            if (steam.Error != null || steam.Items.Count != 3) throw new InvalidOperationException($"подтверждения: {steam.Error} ({steam.Items.Count})");
+            await steam.Items[2].AcceptCommand.ExecuteAsync(null);
+            if (steam.Items.Count != 2) throw new InvalidOperationException("подтверждение не ушло");
+        });
+
         await Shot("12-confirm", () =>
         {
             shell.Dialog?.Close(false);

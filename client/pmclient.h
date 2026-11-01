@@ -114,6 +114,11 @@ int  pmc_update(pm_client *c, uint32_t id, const char *category, const char *nam
 /* Код на момент unix_time; считает токен. type/period можно не запрашивать (NULL). */
 int  pmc_otp(pm_client *c, uint32_t id, uint64_t unix_time, char *code, size_t cap,
              uint8_t *type, uint8_t *period);
+/* Steam: ключ мобильного подтверждения (HMAC-SHA1 от identity_secret, считает токен).
+ * tag — conf, details<id>, allow, cancel… (1..32 символа [a-z0-9]). */
+int  pmc_steam_conf(pm_client *c, uint32_t id, uint64_t unix_time, const char *tag, uint8_t key[20]);
+/* SteamID записи; revocation != NULL — ещё и код восстановления (как пароль: лимит и журнал). */
+int  pmc_steam_info(pm_client *c, uint32_t id, uint64_t *steamid, char *revocation, size_t cap);
 int  pmc_log(pm_client *c, pmc_log_cb cb, void *ctx);
 int  pmc_backup(pm_client *c, uint8_t *out, size_t cap, size_t *len);
 int  pmc_factory_reset(pm_client *c);

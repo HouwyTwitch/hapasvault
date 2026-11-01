@@ -31,6 +31,8 @@ public sealed partial class LogViewModel(ShellViewModel shell) : ObservableObjec
         0x43 => ("Icon.Delete", "Удаление записи"),
         0x44 => ("Icon.Edit", "Изменение записи"),
         0x45 => ("Icon.ShieldLock", "Одноразовый код"),
+        0x46 => ("Icon.SwapHoriz", "Подтверждение Steam"),
+        0x47 => ("Icon.Key", "Код восстановления Steam"),
         0x51 => ("Icon.Download", "Резервная копия"),
         _ => ("Icon.Info", $"Команда 0x{cmd:X2}"),
     };

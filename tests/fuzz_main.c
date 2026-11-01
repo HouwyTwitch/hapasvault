@@ -41,7 +41,11 @@ static size_t seed_request(uint8_t *b, size_t cap)
     wire_w w = {b, cap, 0, 0};
     uint8_t otp[4 + 20] = {OTP_TOTP, 1, 6, 30, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
                            '1', '2', '3', '4', '5', '6', '7', '8', '9', '0'};
-    switch (rnd() % 10) {
+    static const uint8_t steam[] = {OTP_STEAM_MOBILE, 1, 5, 30,
+                                    10, 's','h','a','r','e','d','-','1','2','3',
+                                    10, 'i','d','e','n','t','i','t','y','-','1',
+                                    1, 0, 0, 0, 0, 0, 0, 0, 3, 'R','1','2'};
+    switch (rnd() % 13) {
     case 0: wire_put_u8(&w, CMD_INFO); break;
     case 1: wire_put_u8(&w, CMD_LIST); break;
     case 2: wire_put_u8(&w, CMD_GET); wire_put_u32(&w, rnd() % 8); break;
@@ -62,6 +66,18 @@ static size_t seed_request(uint8_t *b, size_t cap)
     case 6: wire_put_u8(&w, CMD_DELETE); wire_put_u32(&w, rnd() % 8); break;
     case 7: wire_put_u8(&w, CMD_LOG); break;
     case 8: wire_put_u8(&w, CMD_BACKUP); break;
+    case 9:
+        wire_put_u8(&w, CMD_ADD);
+        wire_put_str(&w, "g"); wire_put_str(&w, "steam"); wire_put_str(&w, "u");
+        wire_put_u16(&w, 1); wire_put_u8(&w, 'p');
+        wire_put_u8(&w, sizeof steam); wire_put_bytes(&w, steam, sizeof steam);
+        break;
+    case 10:
+        wire_put_u8(&w, CMD_STEAM_CONF); wire_put_u32(&w, rnd() % 8);
+        wire_put_u32(&w, 1700000000u + rnd() % 1000); wire_put_u32(&w, 0);
+        wire_put_u8(&w, 5); wire_put_bytes(&w, (rnd() & 1) ? "allow" : "list0", 5);
+        break;
+    case 11: wire_put_u8(&w, CMD_STEAM_INFO); wire_put_u32(&w, rnd() % 8); wire_put_u8(&w, (uint8_t)(rnd() % 3)); break;
     default: wire_put_u8(&w, (uint8_t)rnd()); break;
     }
     return w.n;

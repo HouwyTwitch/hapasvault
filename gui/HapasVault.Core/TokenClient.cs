@@ -12,7 +12,10 @@ public enum TokenConnection { Auto, Usb, Simulator }
 /// <summary>Через что подключены сейчас.</summary>
 public enum TokenTransport { None, Simulator, Usb }
 
-public sealed record VaultItem(uint Id, string Category, string Name, OtpKind Otp = OtpKind.None);
+public sealed record VaultItem(uint Id, string Category, string Name, OtpKind Otp = OtpKind.None, bool SteamConfirmations = false);
+
+/// <summary>SteamID записи и (по запросу) код восстановления.</summary>
+public sealed record SteamInfo(ulong SteamId, string? RevocationCode);
 
 public sealed record Credential(string Login, string Password);
 
@@ -166,7 +169,9 @@ public sealed unsafe partial class TokenClient : ITokenClient
     private static void OnItem(nint ctx, uint id, byte* category, byte* name, byte otp)
     {
         var items = (List<VaultItem>)GCHandle.FromIntPtr(ctx).Target!;
-        items.Add(new VaultItem(id, Native.Utf8(category), Native.Utf8(name), otp <= 2 ? (OtpKind)otp : OtpKind.None));
+        // 3 — Steam Guard с подтверждениями (core/otp.h, OTP_STEAM_MOBILE)
+        var kind = otp switch { 1 => OtpKind.Totp, 2 or 3 => OtpKind.Steam, _ => OtpKind.None };
+        items.Add(new VaultItem(id, Native.Utf8(category), Native.Utf8(name), kind, otp == 3));
     }
 
     public Task<Credential> GetAsync(uint id) => Run(h =>
@@ -262,6 +267,21 @@ public sealed unsafe partial class TokenClient : ITokenClient
         {
             new Span<byte>(code, 16).Clear();
         }
+    });
+
+    public Task<byte[]> GetSteamConfirmationKeyAsync(uint id, long unixTime, string tag) => Run(h =>
+    {
+        var key = new byte[20];
+        fixed (byte* k = key)
+            Check(Native.pmapi_steam_conf(h, id, (ulong)unixTime, tag, k));
+        return key;
+    });
+
+    public Task<SteamInfo> GetSteamInfoAsync(uint id, bool revocationCode = false) => Run(h =>
+    {
+        byte* rev = stackalloc byte[32];
+        Check(Native.pmapi_steam_info(h, id, out ulong sid, revocationCode ? rev : null, revocationCode ? 32u : 0u));
+        return new SteamInfo(sid, revocationCode ? Native.Utf8(rev) : null);
     });
 
     public Task DeleteAsync(uint id) => Call(h => Native.pmapi_delete(h, id));

@@ -55,6 +55,12 @@ public sealed partial class ShellViewModel : ObservableObject
     public AppSettings Settings { get; }
     public ThemeManager Theme { get; }
     public SnackbarViewModel Snackbar { get; } = new();
+    /// <summary>Steam Web и сессии ПК; в демо — заглушки (сеть не трогаем).</summary>
+    public Core.Steam.ISteamWeb SteamWeb => IsDemo ? _demoSteam ??= new DemoSteamWeb() : _steam ??= new Core.Steam.SteamWeb();
+    public Core.Steam.ISteamSessionStore SteamSessions => IsDemo ? _demoSessions : _sessions ??= Services.SteamSessions.Create();
+    private Core.Steam.ISteamWeb? _steam, _demoSteam;
+    private Core.Steam.ISteamSessionStore? _sessions;
+    private readonly Core.Steam.ISteamSessionStore _demoSessions = new MemorySteamSessionStore();
     public SecretClipboard Clipboard { get; } = new();
     public Radial.RadialController? Radial { get; set; }
     public GlobalHotkey? Hotkey { get; set; }

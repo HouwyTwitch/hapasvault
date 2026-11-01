@@ -232,6 +232,11 @@
                               Visibility="{Binding IsOtpShown, Converter={StaticResource VisibleWhen}}" />
             </StackPanel>
           </Border>
+          <!-- подтверждения Steam: identity_secret на токене -->
+          <Button Style="{StaticResource Button.Tonal}" Margin="0,12,0,0" HorizontalAlignment="Stretch" Height="52"
+                  Content="Подтверждения Steam" c:A.Icon="{StaticResource Icon.SwapHoriz}" Command="{Binding OpenSteamCommand}"
+                  ToolTip="Обмены, торговая площадка и другие мобильные подтверждения: ключи считает токен"
+                  Visibility="{Binding HasSteamConfirmations, Converter={StaticResource VisibleWhen}}" />
           <DockPanel Margin="4,16,4,0">
             <c:Icon DockPanel.Dock="Left" Data="{StaticResource Icon.ShieldLock}" Width="18" Height="18" Margin="0,0,10,0" VerticalAlignment="Top"
                     Foreground="{DynamicResource OnSurfaceVariant}" />

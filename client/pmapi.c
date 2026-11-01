@@ -218,6 +218,14 @@ int pmapi_otp(pmapi *h, uint32_t id, uint64_t unix_time, char *code, size_t cap,
 {
     return io(h, pmc_otp(&h->c, id, unix_time, code, cap, type, period));
 }
+int pmapi_steam_conf(pmapi *h, uint32_t id, uint64_t unix_time, const char *tag, uint8_t key[20])
+{
+    return io(h, pmc_steam_conf(&h->c, id, unix_time, tag, key));
+}
+int pmapi_steam_info(pmapi *h, uint32_t id, uint64_t *steamid, char *revocation, size_t cap)
+{
+    return io(h, pmc_steam_info(&h->c, id, steamid, revocation, cap));
+}
 int pmapi_log(pmapi *h, pmapi_log_cb cb, void *ctx) { return io(h, pmc_log(&h->c, cb, ctx)); }
 
 int pmapi_backup(pmapi *h, uint8_t *out, size_t cap, size_t *len)

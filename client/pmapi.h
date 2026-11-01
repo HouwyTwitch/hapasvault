@@ -24,7 +24,7 @@
 #  define PMAPI __attribute__((visibility("default")))
 #endif
 
-#define PMAPI_VERSION 4   /* 4: USB-токен (CDC); 3: OTP, правка записи на месте */
+#define PMAPI_VERSION 5   /* 5: подтверждения Steam; 4: USB-токен (CDC); 3: OTP */
 
 typedef struct pmapi pmapi;
 
@@ -90,6 +90,9 @@ PMAPI int     pmapi_update(pmapi *h, uint32_t id, const char *category, const ch
                            const char *password, int otp_mode, const uint8_t *otp, size_t otp_len);
 PMAPI int     pmapi_otp(pmapi *h, uint32_t id, uint64_t unix_time, char *code, size_t cap,
                         uint8_t *type, uint8_t *period);
+/* Steam: ключ подтверждения (20 байт) и SteamID / код восстановления записи. */
+PMAPI int     pmapi_steam_conf(pmapi *h, uint32_t id, uint64_t unix_time, const char *tag, uint8_t key[20]);
+PMAPI int     pmapi_steam_info(pmapi *h, uint32_t id, uint64_t *steamid, char *revocation, size_t cap);
 PMAPI int     pmapi_log(pmapi *h, pmapi_log_cb cb, void *ctx);
 PMAPI int     pmapi_backup(pmapi *h, uint8_t *out, size_t cap, size_t *len);
 PMAPI int     pmapi_factory_reset(pmapi *h);
