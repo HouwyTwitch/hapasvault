@@ -104,7 +104,7 @@ public sealed class DemoTokenClient : ITokenClient
     public async Task<TokenInfo> GetInfoAsync()
     {
         await Delay(40);
-        return new TokenInfo(IsPaired, _setup, _unlocked, 3, (uint)_items.Count, Uptime, _unlocked ? UsedBytes() : 0, 32768);
+        return new TokenInfo(IsPaired, _setup, _unlocked, 3, (uint)_items.Count, Uptime, _unlocked ? UsedBytes() : 0, 192 * 1024 - 84);
     }
 
     public async Task<string[]> BeginSetupAsync()

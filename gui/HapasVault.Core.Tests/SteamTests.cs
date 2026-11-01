@@ -45,6 +45,20 @@ public class SteamParseTests
     }
 
     [Fact]
+    public void SharedSecretPlusSeparateIdentitySecret()
+    {
+        // не maFile, а два секрета по отдельности: код входа + подтверждения
+        var s = OtpSecret.Parse(Convert.ToBase64String(Shared), OtpKind.Steam);
+        Assert.Null(s.Mobile);
+        var both = s.WithMobile(OtpSecret.ParseIdentity(Convert.ToBase64String(Identity)));
+        Assert.Equal(Identity, both.Mobile!.IdentitySecret);
+        Assert.Equal(3, both.ToBlob()[0]);                              // блок STEAM_MOBILE
+        Assert.Equal(s.Code(DateTimeOffset.FromUnixTimeSeconds(1700000000)), both.Code(DateTimeOffset.FromUnixTimeSeconds(1700000000)));
+        Assert.Contains("Base64", Assert.Throws<FormatException>(() => OtpSecret.ParseIdentity("не base64!")).Message);
+        Assert.Contains("10–64", Assert.Throws<FormatException>(() => OtpSecret.ParseIdentity("AAAA")).Message);
+    }
+
+    [Fact]
     public void DeviceIdLikeSteamTotp()
     {
         // steam-totp: android: + sha1("76561197960287930") в виде GUID

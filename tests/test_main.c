@@ -12,6 +12,7 @@
 #endif
 
 #include "bip39.h"
+#include "hal.h"
 #include "hal_sim.h"
 #include "kdf.h"
 #include "monocypher.h"
@@ -169,7 +170,7 @@ static void test_session(void)
 
 static const char *PW = "correct horse battery staple";
 static char g_words[512 + 256];
-static uint8_t g_backup[PM_MAX_FRAME];
+static uint8_t g_backup[PM_MAX_BACKUP];
 static size_t g_backup_len;
 
 static void test_full_flow(void)
@@ -221,9 +222,9 @@ static void test_full_flow(void)
 
     section("дамп flash не содержит секретов в открытом виде");
     const uint8_t *fl = hal_sim_flash();
-    CHECK(!memfind(fl, STORE_TOTAL_BYTES, "S3cr3t-Gmail!", 13), "пароль не виден в flash");
-    CHECK(!memfind(fl, STORE_TOTAL_BYTES, "Gmail", 5), "название не видно в flash");
-    CHECK(!memfind(fl, STORE_TOTAL_BYTES, c.k_pc, 32), "K_pc не хранится на токене");
+    CHECK(!memfind(fl, hal_flash_size(), "S3cr3t-Gmail!", 13), "пароль не виден в flash");
+    CHECK(!memfind(fl, hal_flash_size(), "Gmail", 5), "название не видно в flash");
+    CHECK(!memfind(fl, hal_flash_size(), c.k_pc, 32), "K_pc не хранится на токене");
 
     section("блокировка, неверный пароль, задержки");
     CHECK_RC(pmc_lock(&c), 0, "lock");
@@ -278,7 +279,7 @@ static void test_full_flow(void)
     CHECK_RC(pmc_add(&c, "Тест", "Unsaved", "u", "p", &id4), 0, "add");
     /* портим самую свежую копию — как будто запись прервалась */
     uint8_t *f = hal_sim_flash();
-    uint32_t offA = 2 * 4096, offB = (2 + STORE_SLOT_SECTORS) * 4096;
+    uint32_t offA = store_slot_offset(0), offB = store_slot_offset(1);
     uint32_t seqA = f[offA + 4] | f[offA + 5] << 8, seqB = f[offB + 4] | f[offB + 5] << 8;
     uint32_t newest = seqA > seqB ? offA : offB;
     f[newest + STORE_VAULT_HDR + 3] ^= 0x55;
@@ -505,9 +506,9 @@ static void test_otp_protocol(void)
 
     section("OTP: секрет не виден в flash, бэкапе и ответах");
     const uint8_t *fl = hal_sim_flash();
-    CHECK(!memfind(fl, STORE_TOTAL_BYTES, "steam-test-secret", 17), "секрет Steam не виден в flash");
-    CHECK(!memfind(fl, STORE_TOTAL_BYTES, "12345678901234567890", 20), "секрет TOTP не виден в flash");
-    uint8_t bk[PM_MAX_FRAME];
+    CHECK(!memfind(fl, hal_flash_size(), "steam-test-secret", 17), "секрет Steam не виден в flash");
+    CHECK(!memfind(fl, hal_flash_size(), "12345678901234567890", 20), "секрет TOTP не виден в flash");
+    static uint8_t bk[PM_MAX_BACKUP];
     size_t bkl;
     CHECK_RC(pmc_backup(&c, bk, sizeof bk, &bkl), 0, "backup");
     CHECK(!memfind(bk, bkl, "steam-test-secret", 17), "бэкап зашифрован");
@@ -632,7 +633,7 @@ static void test_steam_confirmations(void)
         if (pmc_steam_conf(&c, id, 1700000000, "conf", key) == ST_RATE_LIMIT) limited = 1;
     CHECK(limited, "не больше 30 ключей в минуту");
     const uint8_t *fl = hal_sim_flash();
-    CHECK(!memfind(fl, STORE_TOTAL_BYTES, "steam-identity", 14), "identity_secret не виден в flash");
+    CHECK(!memfind(fl, hal_flash_size(), "steam-identity", 14), "identity_secret не виден в flash");
     uint32_t id2;
     uint8_t up[OTP_BLOB_MAX];
     size_t ul = steam_blob(up, "steam-test-secret-1234", "steam-identity-secret-02", 7, "R99999");
@@ -652,7 +653,7 @@ static void test_storage_info(void)
 
     section("INFO: занятое и свободное место");
     CHECK_RC(pmc_info(&c, &info), 0, "info");
-    CHECK(info.capacity == STORE_PLAIN_MAX, "ёмкость = STORE_PLAIN_MAX");
+    CHECK(info.capacity == store_capacity() && info.capacity > 150000, "ёмкость — по буферу и flash (сотни КБ)");
     uint32_t empty = info.used;
     uint32_t id;
     CHECK_RC(pmc_add(&c, "Кат", "Имя", "логин", "пароль-123", &id), 0, "add");
@@ -665,8 +666,134 @@ static void test_storage_info(void)
     CHECK(info.used == empty, "после удаления — как было");
     CHECK_RC(pmc_lock(&c), 0, "lock");
     pmc_info(&c, &info);
-    CHECK(info.used == 0 && info.capacity == STORE_PLAIN_MAX, "закрыто: used не раскрывается");
+    CHECK(info.used == 0 && info.capacity == store_capacity(), "закрыто: used не раскрывается");
     pmc_wipe(&c);
+}
+
+/* Записать в flash симулятора старую разметку (последние 80 КБ): конфигурация v2
+ * в секторе 0, копия хранилища (как бэкап) в слоте A. Остальное стёрто. */
+static void write_legacy_layout(const pm_config *cfg, const uint8_t *blob, size_t blob_len, const char *file)
+{
+    static uint8_t img[256 * 1024];
+    memset(img, 0xFF, sizeof img);
+    uint8_t *b = img;                              /* старый файл: разметка с нуля */
+    wire_put32(b, 0x46434D50u);                    /* "PMCF" */
+    b[4] = 2;
+    wire_put32(b + 5, cfg->seq);
+    b[9] = cfg->flags;
+    memcpy(b + 10, cfg->token_sk, 32);
+    memcpy(b + 42, cfg->pc_pub, 32);
+    memcpy(b + 74, cfg->k_token, 32);
+    wire_put32(b + 106, cfg->fails);
+    crypto_blake2b(b + 110, 32, b, 110);
+    memcpy(img + 2 * 4096, blob, blob_len);        /* слот A старой разметки */
+    FILE *f = fopen(file, "wb");
+    fwrite(img, 1, sizeof img, f);
+    fclose(f);
+}
+
+static void test_big_vault_and_migration(void)
+{
+    pm_client c;
+    char words[512];
+    static uint8_t bk[PM_MAX_BACKUP];
+    size_t bl = 0;
+    static char pw[PM_MAX_PASSWORD + 1];
+    char name[32], login[300], got[PM_MAX_PASSWORD + 1];
+
+    section("ёмкость: по RAM и flash, а не 32 КБ");
+    hal_sim_open(NULL);
+    token_init();
+    new_client(&c);
+    pmc_pair(&c);
+    pmc_connect(&c);
+    pmc_setup_begin(&c, words, sizeof words);
+    CHECK_RC(pmc_setup_commit(&c, PW), 0, "setup");
+    pmc_info_t info;
+    pmc_info(&c, &info);
+    CHECK(info.capacity >= 190000, "ёмкость ~192 КБ (буфер симулятора как у RP2040)");
+    memset(pw, 'k', 1000);
+    pw[1000] = 0;
+    int ok = 1;
+    for (int i = 0; i < 150 && ok; i++) {
+        snprintf(name, sizeof name, "Запись %03d", i);
+        uint32_t id;
+        pw[0] = (char)('A' + i % 26);
+        ok = pmc_add(&c, "Много", name, "user", pw, &id) == 0;
+    }
+    CHECK(ok, "150 записей по 1 КБ (больше старого лимита)");
+    pmc_info(&c, &info);
+    CHECK(info.used > 150000, "занято > 150 КБ");
+    CHECK(list_count(&c) == 150, "список — несколькими страницами, все 150");
+
+    section("бэкап частями и восстановление на чистый токен");
+    CHECK_RC(pmc_backup(&c, bk, sizeof bk, &bl), 0, "backup");
+    CHECK(bl > 150000 && bl > PM_MAX_FRAME, "бэкап больше кадра");
+    CHECK(!memfind(bk, bl, "kkkkkkkk", 8), "бэкап зашифрован");
+    reboot_token();
+    pmc_connect(&c);
+    pmc_unlock(&c, PW);
+    CHECK_RC(pmc_factory_reset(&c), 0, "стёрли токен");
+    hal_sim_open(NULL);                            /* «новая плата» */
+    token_init();
+    pm_client n;
+    new_client(&n);
+    pmc_pair(&n);
+    pmc_connect(&n);
+    CHECK_RC(pmc_restore(&n, words, PW, bk, bl), 0, "restore 150 КБ");
+    CHECK(list_count(&n) == 150, "все записи на месте");
+    uint32_t first_id = 0;
+    for (uint32_t id = 1; id < 300 && !first_id; id++)
+        if (pmc_get(&n, id, login, sizeof login, got, sizeof got) == 0) first_id = id;
+    CHECK(first_id && strlen(got) == 1000 && got[0] == 'A', "данные целы");
+
+    section("заполнение до отказа");
+    int full = 0;
+    for (int i = 0; i < 400 && !full; i++) {
+        uint32_t id;
+        snprintf(name, sizeof name, "Ещё %03d", i);
+        int rc = pmc_add(&n, "", name, "u", pw, &id);
+        if (rc == ST_FULL) full = 1;
+        else if (rc != 0) break;
+    }
+    pmc_info(&n, &info);
+    CHECK(full && info.used <= info.capacity && info.capacity - info.used < 1100, "ST_FULL у самого края ёмкости");
+    pmc_wipe(&n);
+
+    section("перенос старой разметки (последние 80 КБ)");
+    hal_sim_open(NULL);
+    token_init();
+    new_client(&c);
+    pmc_pair(&c);
+    pmc_connect(&c);
+    pmc_setup_begin(&c, words, sizeof words);
+    pmc_setup_commit(&c, PW);
+    uint32_t idx;
+    pmc_add(&c, "Старое", "До обновления", "old-user", "old-pass", &idx);
+    bl = 0;
+    pmc_backup(&c, bk, sizeof bk, &bl);           /* копия слота = формат старого слота */
+    pm_config cfg;
+    store_config_load(&cfg);
+    write_legacy_layout(&cfg, bk, bl, "legacy_flash.bin");
+    crypto_wipe(&cfg, sizeof cfg);
+    hal_sim_open("legacy_flash.bin");              /* файл прежней версии, 256 КБ */
+    token_init();                                  /* перенос */
+    CHECK_RC(pmc_connect(&c), 0, "сопряжение пережило перенос");
+    CHECK_RC(pmc_unlock(&c, PW), 0, "хранилище открывается");
+    CHECK_RC(pmc_get(&c, idx, login, sizeof login, got, sizeof got), 0, "запись");
+    CHECK(!strcmp(login, "old-user") && !strcmp(got, "old-pass"), "данные целы после переноса");
+    pmc_info(&c, &info);
+    CHECK(info.capacity >= 190000, "и ёмкость уже новая");
+    uint32_t id2;
+    CHECK_RC(pmc_add(&c, "", "После", "u", "p", &id2), 0, "запись после переноса");
+    hal_sim_open("legacy_flash.bin");              /* перезапуск: новый файл 1 МБ */
+    token_init();
+    pmc_connect(&c);
+    CHECK_RC(pmc_unlock(&c, PW), 0, "после перезапуска");
+    CHECK(list_count(&c) == 2, "обе записи");
+    remove("legacy_flash.bin");
+    pmc_wipe(&c);
+    hal_sim_open(NULL);
 }
 
 static void test_framer(void)
@@ -850,6 +977,7 @@ int main(int argc, char **argv)
     test_framer();
     test_steam_confirmations();
     test_storage_info();
+    test_big_vault_and_migration();
     if (argc > 1 && !strcmp(argv[1], "--argon")) test_real_argon_cost();
     printf("\nИтого: %d пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

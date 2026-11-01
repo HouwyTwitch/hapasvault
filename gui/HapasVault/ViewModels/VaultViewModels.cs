@@ -233,6 +233,7 @@ public sealed partial class VaultViewModel(ShellViewModel shell) : ObservableObj
         {
             IsEdit = true,
             ExistingOtp = e.Otp,
+            ExistingSteamConfirmations = e.Item.SteamConfirmations,
             OtpChoice = e.Otp,
             Name = e.Name,
             Category = e.Category,
@@ -425,6 +426,8 @@ public sealed partial class DetailViewModel : ObservableObject
 
     /// <summary>У записи есть identity_secret: обмены и площадку можно подтверждать.</summary>
     public bool HasSteamConfirmations => Entry.Item.SteamConfirmations;
+    /// <summary>Steam только с кодом входа: подсказать, как включить подтверждения.</summary>
+    public bool CanEnableSteamConfirmations => Entry.Otp == OtpKind.Steam && !Entry.Item.SteamConfirmations;
 
     [RelayCommand]
     private async Task OpenSteam()
@@ -475,34 +478,50 @@ public sealed partial class EditorDialogViewModel : DialogViewModel
 
     // ---- двухфакторные коды: секрет уходит на токен и обратно не выдаётся ----
     public OtpKind ExistingOtp { get; init; }
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(OtpVisible), nameof(OtpHint))] private OtpKind _otpChoice;
-    [ObservableProperty] private string _otpInput = "";
+    /// <summary>У записи уже есть identity_secret (подтверждения Steam).</summary>
+    public bool ExistingSteamConfirmations { get; init; }
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(OtpVisible), nameof(OtpHint), nameof(IdentityVisible))] private OtpKind _otpChoice;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IdentityVisible))] private string _otpInput = "";
+    /// <summary>identity_secret отдельно — если вставили не maFile, а только shared_secret.</summary>
+    [ObservableProperty] private string _identityInput = "";
+    [ObservableProperty] private string? _identityError;
+
+    /// <summary>Поле identity_secret: Steam выбран и вставлен не maFile с identity_secret.</summary>
+    public bool IdentityVisible => OtpChoice == OtpKind.Steam && !OtpInput.TrimStart().StartsWith('{');
     [ObservableProperty] private string? _otpStatus;
     [ObservableProperty] private bool _otpOk;
     [ObservableProperty] private string? _otpError;
 
     public bool OtpVisible => OtpChoice != OtpKind.None;
     public string OtpHint => OtpChoice == OtpKind.Steam
-        ? "Весь maFile — код входа и подтверждения обменов (identity_secret останется на токене); или shared_secret / steam://"
+        ? ExistingOtp == OtpKind.Steam && !ExistingSteamConfirmations
+            ? "Подтверждения обменов выключены. Вставьте maFile целиком — или shared_secret здесь и identity_secret ниже (токен не выдаёт сохранённый секрет)"
+            : ExistingOtp == OtpKind.Steam
+                ? "Оставьте пустым, чтобы сохранить текущие секреты. Новые — maFile целиком"
+                : "Весь maFile — код входа и подтверждения обменов (identity_secret останется на токене); или shared_secret / steam://"
         : ExistingOtp != OtpKind.None
             ? "Оставьте пустым, чтобы сохранить текущий секрет. Новый — otpauth:// или Base32"
             : "Ссылка otpauth:// из QR-кода или секрет Base32 из настроек 2FA сервиса";
 
     partial void OnOtpChoiceChanged(OtpKind value) => CheckOtp();
     partial void OnOtpInputChanged(string value) => CheckOtp();
+    partial void OnIdentityInputChanged(string value) => CheckOtp();
 
     private void CheckOtp()
     {
         OtpError = null;
+        IdentityError = null;
         OtpOk = false;
         if (OtpChoice == OtpKind.None || OtpInput.Trim().Length == 0)
         {
+            if (IdentityVisible && IdentityInput.Trim().Length > 0)
+                IdentityError = "Вставьте и shared_secret выше: токен не выдаёт сохранённый секрет, заменяются оба";
             OtpStatus = OtpChoice != OtpKind.None && ExistingOtp == OtpChoice ? "Текущий секрет останется на токене" : null;
             return;
         }
         try
         {
-            var s = OtpSecret.Parse(OtpInput, OtpChoice);
+            var s = Resolve();
             if (s.Kind != OtpChoice) OtpChoice = s.Kind;   // вставили ссылку другого типа — переключаемся
             OtpStatus = s.Describe() + (s.Issuer is { Length: > 0 } i ? $" · {i}" : "") + $" · сейчас {s.Code(DateTimeOffset.UtcNow)}";
             OtpOk = true;
@@ -516,6 +535,24 @@ public sealed partial class EditorDialogViewModel : DialogViewModel
         }
     }
 
+    /// <summary>Секрет из полей: maFile как есть, или shared_secret + отдельный identity_secret.</summary>
+    private OtpSecret Resolve()
+    {
+        var s = OtpSecret.Parse(OtpInput, OtpChoice);
+        if (s.Kind == OtpKind.Steam && s.Mobile == null && IdentityVisible && IdentityInput.Trim().Length > 0)
+        {
+            try
+            {
+                s = s.WithMobile(OtpSecret.ParseIdentity(IdentityInput));
+            }
+            catch (FormatException e)
+            {
+                IdentityError = e.Message;
+            }
+        }
+        return s;
+    }
+
     /// <summary>Что сделать с OTP при сохранении (после Validate).</summary>
     public (OtpChange Change, OtpSecret? Secret) ResolvedOtp
     {
@@ -523,7 +560,7 @@ public sealed partial class EditorDialogViewModel : DialogViewModel
         {
             if (OtpChoice == OtpKind.None) return (OtpChange.Remove, null);
             if (OtpInput.Trim().Length == 0) return (OtpChange.Keep, null);
-            return (OtpChange.Set, OtpSecret.Parse(OtpInput, OtpChoice));
+            return (OtpChange.Set, Resolve());
         }
     }
 
@@ -562,6 +599,7 @@ public sealed partial class EditorDialogViewModel : DialogViewModel
         if (OtpChoice != OtpKind.None && OtpInput.Trim().Length == 0 && ExistingOtp != OtpChoice)
             OtpError = "Вставьте секрет или ссылку otpauth://";
         if (OtpError != null) Error ??= OtpError;
+        if (IdentityError != null) Error ??= IdentityError;
         if (Name.Trim().Length == 0)
         {
             NameError = "Укажите название";

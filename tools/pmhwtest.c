@@ -145,6 +145,8 @@ int main(int argc, char **argv)
     pmc_info_t info;
     start(); step("INFO", pmc_info(&g_c, &info), 0);
     check("версия протокола", info.proto == PM_PROTO_VERSION);
+    printf("  ёмкость хранилища: %u КБ (по RAM и flash платы)\n", (unsigned)(info.capacity / 1024));
+    check("ёмкость больше 100 КБ", info.capacity > 100u * 1024u);
 
     char words[512];
     start(); step("SETUP_BEGIN (seed из RNG токена)", pmc_setup_begin(&g_c, words, sizeof words), 0);
@@ -197,7 +199,7 @@ int main(int argc, char **argv)
     check("4 записи", g_items == 4);
     start(); step("DELETE", pmc_delete(&g_c, id_totp), 0);
 
-    static uint8_t backup[PM_MAX_FRAME];
+    static uint8_t backup[PM_MAX_BACKUP];
     size_t blen = 0;
     start(); step("BACKUP", pmc_backup(&g_c, backup, sizeof backup, &blen), 0);
     check("копия не пустая", blen > 100);

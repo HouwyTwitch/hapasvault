@@ -6,6 +6,7 @@
  *
  *   pmfuzz [итераций] [seed]
  */
+#include "hal.h"
 #include "hal_sim.h"
 #include "kdf.h"
 #include "monocypher.h"
@@ -46,9 +47,9 @@ static size_t seed_request(uint8_t *b, size_t cap)
                                     10, 's','h','a','r','e','d','-','1','2','3',
                                     10, 'i','d','e','n','t','i','t','y','-','1',
                                     1, 0, 0, 0, 0, 0, 0, 0, 3, 'R','1','2'};
-    switch (rnd() % 13) {
+    switch (rnd() % 14) {
     case 0: wire_put_u8(&w, CMD_INFO); break;
-    case 1: wire_put_u8(&w, CMD_LIST); break;
+    case 1: wire_put_u8(&w, CMD_LIST); wire_put_u32(&w, rnd() % 4); break;
     case 2: wire_put_u8(&w, CMD_GET); wire_put_u32(&w, rnd() % 8); break;
     case 3:
         wire_put_u8(&w, CMD_ADD);
@@ -66,7 +67,7 @@ static size_t seed_request(uint8_t *b, size_t cap)
     case 5: wire_put_u8(&w, CMD_OTP); wire_put_u32(&w, rnd() % 8); wire_put_u32(&w, 1700000000u + rnd() % 1000); wire_put_u32(&w, 0); break;
     case 6: wire_put_u8(&w, CMD_DELETE); wire_put_u32(&w, rnd() % 8); break;
     case 7: wire_put_u8(&w, CMD_LOG); break;
-    case 8: wire_put_u8(&w, CMD_BACKUP); break;
+    case 8: wire_put_u8(&w, CMD_BACKUP); wire_put_u32(&w, (rnd() & 1) ? 0 : rnd() % 20000); break;
     case 9:
         wire_put_u8(&w, CMD_ADD);
         wire_put_str(&w, "g"); wire_put_str(&w, "steam"); wire_put_str(&w, "u");
@@ -79,6 +80,12 @@ static size_t seed_request(uint8_t *b, size_t cap)
         wire_put_u8(&w, 5); wire_put_bytes(&w, (rnd() & 1) ? "allow" : "list0", 5);
         break;
     case 11: wire_put_u8(&w, CMD_STEAM_INFO); wire_put_u32(&w, rnd() % 8); wire_put_u8(&w, (uint8_t)(rnd() % 3)); break;
+    case 12: {
+        uint32_t total = 84 + rnd() % 300000, off = (rnd() & 1) ? 0 : rnd() % total;
+        wire_put_u8(&w, CMD_RESTORE_DATA); wire_put_u32(&w, off); wire_put_u32(&w, total);
+        for (int i = 0; i < 64; i++) wire_put_u8(&w, (uint8_t)rnd());
+        break;
+    }
     default: wire_put_u8(&w, (uint8_t)rnd()); break;
     }
     return w.n;

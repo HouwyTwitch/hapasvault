@@ -331,18 +331,28 @@ int pmc_restore(pm_client *c, const char *words, const char *master_password,
 {
     uint8_t seed[32];
     if (bip39_decode(words, seed) != 0) return PMC_E_SEED;
-    size_t len = 1 + 96 + backup_len;
-    uint8_t *req = malloc(len);
-    if (!req) { crypto_wipe(seed, 32); return PMC_E_MEMORY; }
+    /* сначала бэкап частями (он больше кадра), потом ключи */
+    for (size_t off = 0; off < backup_len;) {
+        size_t n = backup_len - off < PM_BACKUP_CHUNK ? backup_len - off : PM_BACKUP_CHUNK;
+        uint8_t part[9 + PM_BACKUP_CHUNK];
+        part[0] = CMD_RESTORE_DATA;
+        wire_put32(part + 1, (uint32_t)off);
+        wire_put32(part + 5, (uint32_t)backup_len);
+        memcpy(part + 9, backup + off, n);
+        int st = request(c, part, 9 + n, NULL, NULL);
+        if (st != ST_OK) { crypto_wipe(seed, 32); return st; }
+        off += n;
+    }
+    uint8_t req[1 + 96 + 1];
+    size_t len = sizeof req;
     req[0] = CMD_RESTORE;
     pm_keys_from_seed(seed, req + 1, c->k_pc);
     memcpy(req + 33, c->k_pc, 32);
     crypto_wipe(seed, 32);
     int rc = password_hash(c, master_password, req + 65);
-    if (backup_len) memcpy(req + 97, backup, backup_len);
+    req[97] = backup_len ? 1 : 0;
     if (rc == 0) rc = request(c, req, len, NULL, NULL);
     crypto_wipe(req, len);
-    free(req);
     if (rc == ST_OK) c->have_kpc = 1;
     else { crypto_wipe(c->k_pc, 32); c->have_kpc = 0; }
     return rc;
@@ -375,21 +385,32 @@ static void copy_str(wire_r *r, char *dst, size_t cap, size_t len_bytes)
 
 int pmc_list(pm_client *c, pmc_list_cb cb, void *ctx)
 {
-    const uint8_t *d = NULL;
-    size_t n = 0;
-    int st = request(c, (const uint8_t[]){CMD_LIST}, 1, &d, &n);
-    if (st != ST_OK) return st;
-    wire_r r = {d, n, 0};
-    unsigned cnt = wire_u16(&r);
-    for (unsigned i = 0; i < cnt && !r.err; i++) {
-        char cat[256], name[256];
-        uint32_t id = wire_u32(&r);
-        copy_str(&r, cat, sizeof cat, 1);
-        copy_str(&r, name, sizeof name, 1);
-        uint8_t otp = wire_u8(&r);
-        if (!r.err && cb) cb(ctx, id, cat, name, otp);
+    /* страницами: токен отдаёт сколько влезет в кадр и флаг «ещё» */
+    uint32_t got = 0;
+    for (;;) {
+        uint8_t req[5] = {CMD_LIST};
+        wire_put32(req + 1, got);
+        const uint8_t *d = NULL;
+        size_t n = 0;
+        int st = request(c, req, sizeof req, &d, &n);
+        if (st != ST_OK) return st;
+        wire_r r = {d, n, 0};
+        unsigned cnt = wire_u16(&r);
+        uint8_t more = wire_u8(&r);
+        for (unsigned i = 0; i < cnt && !r.err; i++) {
+            char cat[256], name[256];
+            uint32_t id = wire_u32(&r);
+            copy_str(&r, cat, sizeof cat, 1);
+            copy_str(&r, name, sizeof name, 1);
+            uint8_t otp = wire_u8(&r);
+            if (r.err) break;
+            got++;
+            if (cb) cb(ctx, id, cat, name, otp);
+        }
+        if (r.err) return PMC_E_PROTO;
+        if (!more) return 0;
+        if (cnt == 0) return PMC_E_PROTO;
     }
-    return r.err ? PMC_E_PROTO : 0;
 }
 
 int pmc_get(pm_client *c, uint32_t id, char *login, size_t login_cap,
@@ -566,13 +587,24 @@ int pmc_log(pm_client *c, pmc_log_cb cb, void *ctx)
 
 int pmc_backup(pm_client *c, uint8_t *out, size_t cap, size_t *len)
 {
-    const uint8_t *d = NULL;
-    size_t n = 0;
-    int st = request(c, (const uint8_t[]){CMD_BACKUP}, 1, &d, &n);
-    if (st != ST_OK) return st;
-    if (n > cap) return PMC_E_BUF;
-    memcpy(out, d, n);
-    *len = n;
+    /* частями по PM_BACKUP_CHUNK: хранилище больше кадра */
+    size_t got = 0, total = 1;
+    while (got < total) {
+        uint8_t req[5] = {CMD_BACKUP};
+        wire_put32(req + 1, (uint32_t)got);
+        const uint8_t *d = NULL;
+        size_t n = 0;
+        int st = request(c, req, sizeof req, &d, &n);
+        if (st != ST_OK) return st;
+        if (n < 4) return PMC_E_PROTO;
+        size_t t = wire_get32(d);
+        if (got == 0) total = t;
+        if (t != total || n - 4 > total - got || (n == 4 && got < total)) return PMC_E_PROTO;
+        if (total > cap) return PMC_E_BUF;
+        memcpy(out + got, d + 4, n - 4);
+        got += n - 4;
+    }
+    *len = total;
     return 0;
 }
 

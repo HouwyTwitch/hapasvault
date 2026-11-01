@@ -26,6 +26,11 @@ int hal_flash_read(uint32_t off, void *buf, uint32_t len);
  * На RP2040: flash_range_erase + flash_range_program. 0 = ок. */
 int hal_flash_write_sectors(uint32_t off, const void *buf, uint32_t len);
 
+/* Буфер открытого хранилища в RAM — чем больше, тем больше записей влезет
+ * (ёмкость = min(буфер, половина flash) минус заголовок). RP2040/RP2350 отдают
+ * всю свободную RAM после прошивки. */
+uint8_t *hal_vault_buffer(size_t *cap);
+
 /* Криптографически стойкие случайные байты. */
 void hal_rng(void *buf, size_t len);
 

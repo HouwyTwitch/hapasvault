@@ -6,7 +6,7 @@
 
 #define CFG_MAGIC   0x46434D50u   /* "PMCF" */
 #define VLT_MAGIC   0x54564D50u   /* "PMVT" */
-#define CFG_VERSION 2   /* 2: + счётчик неверных паролей */
+#define CFG_VERSION 3   /* 3: размер слота (разметка от конца flash); 2: счётчик неверных паролей */
 
 /* Заголовок слота хранилища:
  *   0  magic   u32
@@ -23,7 +23,14 @@
 #define H_MAC   36
 #define H_CHECK 52
 
-static uint8_t g_buf[STORE_SLOT_BYTES];   /* общий буфер сектора/слота */
+/* Старая разметка внутри последних 80 КБ: конфигурация 0..1, слоты 2..10 и 11..19 */
+#define LEGACY_SLOT_BYTES (9u * STORE_SECTOR)
+
+static uint8_t  g_sec[STORE_SECTOR];   /* буфер одного сектора: всё остальное — в буфере токена */
+static uint32_t g_slot;                /* размер слота S, байт (кратно сектору) */
+static size_t   g_cap;                 /* ёмкость: байт открытого текста */
+static int      g_cur = -1;            /* свежий целый слот (кэш; -1 — пересчитать) */
+static uint32_t g_cur_seq, g_cur_len;
 
 static void put32(uint8_t *p, uint32_t v)
 {
@@ -34,19 +41,23 @@ static uint32_t get32(const uint8_t *p)
     return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 }
 
-static uint32_t slot_off(int slot)
-{
-    return (STORE_CFG_SECTORS + (uint32_t)slot * STORE_SLOT_SECTORS) * 4096u;
-}
+static uint32_t region(void) { return hal_flash_size(); }
+static uint32_t cfg_off(int i) { return region() - STORE_CFG_BYTES + (uint32_t)i * STORE_SECTOR; }
+static uint32_t slot_off(int slot) { return region() - STORE_CFG_BYTES - (2u - (uint32_t)slot) * g_slot; }
+static uint32_t legacy_base(void) { return region() - STORE_LEGACY_BYTES; }
+
+size_t store_capacity(void) { return g_cap; }
+uint32_t store_slot_offset(int slot) { return slot_off(slot); }
 
 /* ---------------- конфигурация ---------------- */
 
 #define CFG_BODY_V1 106   /* 4 magic + 1 ver + 4 seq + 1 flags + 32*3 */
-#define CFG_BODY    110   /* + u32 fails */
+#define CFG_BODY_V2 110   /* + u32 fails */
+#define CFG_BODY    114   /* + u32 размер слота */
 
 static void cfg_serialize(const pm_config *c, uint8_t *b)
 {
-    memset(b, 0xFF, 4096);
+    memset(b, 0xFF, STORE_SECTOR);
     put32(b, CFG_MAGIC);
     b[4] = CFG_VERSION;
     put32(b + 5, c->seq);
@@ -55,14 +66,17 @@ static void cfg_serialize(const pm_config *c, uint8_t *b)
     memcpy(b + 42, c->pc_pub, 32);
     memcpy(b + 74, c->k_token, 32);
     put32(b + 106, c->fails);
+    put32(b + 110, g_slot);
     crypto_blake2b(b + CFG_BODY, 32, b, CFG_BODY);
 }
 
-static int cfg_parse(const uint8_t *b, pm_config *c)
+/* legacy: 1 — разобрать старые версии (1, 2) из старой разметки; 0 — только текущую. */
+static int cfg_parse(const uint8_t *b, pm_config *c, int legacy, uint32_t *slot)
 {
     uint8_t chk[32];
-    if (get32(b) != CFG_MAGIC || (b[4] != 1 && b[4] != CFG_VERSION)) return -1;
-    size_t body = b[4] == 1 ? CFG_BODY_V1 : CFG_BODY;
+    if (get32(b) != CFG_MAGIC) return -1;
+    if (legacy ? (b[4] != 1 && b[4] != 2) : b[4] != CFG_VERSION) return -1;
+    size_t body = b[4] == 1 ? CFG_BODY_V1 : b[4] == 2 ? CFG_BODY_V2 : CFG_BODY;
     crypto_blake2b(chk, 32, b, body);
     if (crypto_verify32(chk, b + body) != 0) return -1;
     c->fails = b[4] == 1 ? 0 : get32(b + 106);
@@ -71,161 +85,292 @@ static int cfg_parse(const uint8_t *b, pm_config *c)
     memcpy(c->token_sk, b + 10, 32);
     memcpy(c->pc_pub, b + 42, 32);
     memcpy(c->k_token, b + 74, 32);
+    if (slot) *slot = b[4] == CFG_VERSION ? get32(b + 110) : 0;
     return 0;
 }
 
-static int cfg_latest(pm_config *out, int *which)
+static int cfg_latest_at(uint32_t base_a, uint32_t base_b, int legacy, pm_config *out, int *which, uint32_t *slot)
 {
     pm_config c;
+    uint32_t s = 0;
     int found = -1;
     for (int i = 0; i < 2; i++) {
-        if (hal_flash_read((uint32_t)i * 4096u, g_buf, 4096) != 0) continue;
-        if (cfg_parse(g_buf, &c) != 0) continue;
-        if (found < 0 || c.seq > out->seq) { *out = c; found = i; }
+        if (hal_flash_read(i ? base_b : base_a, g_sec, STORE_SECTOR) != 0) continue;
+        if (cfg_parse(g_sec, &c, legacy, &s) != 0) continue;
+        if (found < 0 || c.seq > out->seq) {
+            *out = c;
+            found = i;
+            if (slot) *slot = s;
+        }
     }
     crypto_wipe(&c, sizeof c);
-    crypto_wipe(g_buf, 4096);
+    crypto_wipe(g_sec, sizeof g_sec);
     if (which) *which = found;
     return found < 0 ? -1 : 0;
 }
 
-int store_config_load(pm_config *cfg) { return cfg_latest(cfg, NULL); }
+static int cfg_latest(pm_config *out, int *which, uint32_t *slot)
+{
+    return cfg_latest_at(cfg_off(0), cfg_off(1), 0, out, which, slot);
+}
+
+int store_config_load(pm_config *cfg) { return cfg_latest(cfg, NULL, NULL); }
+
+static int cfg_write(int target, const pm_config *cfg)
+{
+    cfg_serialize(cfg, g_sec);
+    int r = hal_flash_write_sectors(cfg_off(target), g_sec, STORE_SECTOR);
+    crypto_wipe(g_sec, sizeof g_sec);
+    return r;
+}
 
 int store_config_save(pm_config *cfg)
 {
     pm_config cur;
     int which = -1;
-    if (cfg_latest(&cur, &which) == 0) cfg->seq = cur.seq + 1;
+    if (cfg_latest(&cur, &which, NULL) == 0) cfg->seq = cur.seq + 1;
     else if (cfg->seq == 0) cfg->seq = 1;
     crypto_wipe(&cur, sizeof cur);
-    int target = which == 0 ? 1 : 0;
-    cfg_serialize(cfg, g_buf);
-    int r = hal_flash_write_sectors((uint32_t)target * 4096u, g_buf, 4096);
-    crypto_wipe(g_buf, 4096);
-    return r;
+    return cfg_write(which == 0 ? 1 : 0, cfg);
 }
 
-/* ---------------- хранилище ---------------- */
+/* ---------------- проверка целостности слота (без ключа, посекторно) ---------------- */
 
-/* Прочитать слот в g_buf и проверить целостность. */
-static int slot_read_valid(int slot, uint32_t *seq)
+/* Проверить копию по смещению off с размером слота slot_bytes. 0 = целая. */
+static int blob_check(uint32_t off, uint32_t slot_bytes, uint32_t *seq, uint32_t *len_out)
 {
-    if (hal_flash_read(slot_off(slot), g_buf, STORE_SLOT_BYTES) != 0) return -1;
-    if (get32(g_buf) != VLT_MAGIC) return -1;
-    uint32_t len = get32(g_buf + H_LEN);
-    if (len > STORE_CT_MAX) return -1;
-    uint8_t chk[32];
+    uint8_t hdr[STORE_VAULT_HDR];
+    if (hal_flash_read(off, hdr, sizeof hdr) != 0 || get32(hdr) != VLT_MAGIC) return -1;
+    uint32_t len = get32(hdr + H_LEN);
+    if (len > slot_bytes - STORE_VAULT_HDR) return -1;
     crypto_blake2b_ctx ctx;
     crypto_blake2b_init(&ctx, 32);
-    crypto_blake2b_update(&ctx, g_buf, H_CHECK);
-    crypto_blake2b_update(&ctx, g_buf + STORE_VAULT_HDR, len);
+    crypto_blake2b_update(&ctx, hdr, H_CHECK);
+    for (uint32_t done = 0; done < len;) {
+        uint32_t n = len - done < STORE_SECTOR ? len - done : STORE_SECTOR;
+        if (hal_flash_read(off + STORE_VAULT_HDR + done, g_sec, n) != 0) return -1;
+        crypto_blake2b_update(&ctx, g_sec, n);
+        done += n;
+    }
+    uint8_t chk[32];
     crypto_blake2b_final(&ctx, chk);
-    if (crypto_verify32(chk, g_buf + H_CHECK) != 0) return -1;
-    if (seq) *seq = get32(g_buf + H_SEQ);
+    if (crypto_verify32(chk, hdr + H_CHECK) != 0) return -1;
+    if (seq) *seq = get32(hdr + H_SEQ);
+    if (len_out) *len_out = len;
     return 0;
 }
 
-/* Номер свежего целого слота (или -1), его seq. g_buf после вызова не определён. */
-static int vault_latest(uint32_t *seq_out)
+/* Свежий целый слот (или -1). */
+static int vault_latest(void)
 {
+    if (g_cur >= 0) return g_cur;
+    if (!g_slot) return -1;
+    uint32_t s, l, best_seq = 0, best_len = 0;
     int best = -1;
-    uint32_t best_seq = 0, s;
     for (int i = 0; i < 2; i++)
-        if (slot_read_valid(i, &s) == 0 && (best < 0 || s > best_seq)) { best = i; best_seq = s; }
-    if (seq_out) *seq_out = best_seq;
+        if (blob_check(slot_off(i), g_slot, &s, &l) == 0 && (best < 0 || s > best_seq)) {
+            best = i;
+            best_seq = s;
+            best_len = l;
+        }
+    g_cur = best;
+    g_cur_seq = best_seq;
+    g_cur_len = best_len;
     return best;
 }
 
-int store_vault_exists(void) { return vault_latest(NULL) >= 0; }
+int store_vault_exists(void) { return vault_latest() >= 0; }
 
-static int write_slot_from_gbuf(int target)
+/* Записать [hdr][ct len] в слот посекторно через g_sec; хвост слота не трогаем
+ * (там старый шифротекст, его отрезает длина в заголовке). */
+static int write_blob(uint32_t off, const uint8_t *hdr, const uint8_t *ct, uint32_t len)
 {
-    /* дополняем хвост 0xFF, как у стёртой flash */
-    uint32_t len = get32(g_buf + H_LEN);
-    memset(g_buf + STORE_VAULT_HDR + len, 0xFF, STORE_CT_MAX - len);
-    return hal_flash_write_sectors(slot_off(target), g_buf, STORE_SLOT_BYTES);
+    uint32_t total = STORE_VAULT_HDR + len, done = 0;
+    int r = 0;
+    while (done < total && r == 0) {
+        memset(g_sec, 0xFF, sizeof g_sec);
+        for (uint32_t i = 0; i < STORE_SECTOR && done + i < total; i++) {
+            uint32_t p = done + i;
+            g_sec[i] = p < STORE_VAULT_HDR ? hdr[p] : ct[p - STORE_VAULT_HDR];
+        }
+        r = hal_flash_write_sectors(off + done, g_sec, STORE_SECTOR);
+        done += STORE_SECTOR;
+    }
+    crypto_wipe(g_sec, sizeof g_sec);
+    return r;
 }
 
-static void finish_header(uint8_t *b, uint32_t len)
+static void finish_header(uint8_t *hdr, const uint8_t *ct, uint32_t len)
 {
     crypto_blake2b_ctx ctx;
     crypto_blake2b_init(&ctx, 32);
-    crypto_blake2b_update(&ctx, b, H_CHECK);
-    crypto_blake2b_update(&ctx, b + STORE_VAULT_HDR, len);
-    crypto_blake2b_final(&ctx, b + H_CHECK);
+    crypto_blake2b_update(&ctx, hdr, H_CHECK);
+    crypto_blake2b_update(&ctx, ct, len);
+    crypto_blake2b_final(&ctx, hdr + H_CHECK);
 }
 
-int store_vault_save(const uint8_t k_vault[32], const uint8_t *plain, size_t len)
+int store_vault_save(const uint8_t k_vault[32], uint8_t *plain, size_t len)
 {
-    if (len > STORE_PLAIN_MAX) return -1;
-    uint32_t seq = 0;
-    int cur = vault_latest(&seq);
+    if (len > g_cap) return -1;
+    int cur = vault_latest();
     int target = cur == 0 ? 1 : 0;
+    uint32_t seq = cur < 0 ? 1 : g_cur_seq + 1;
 
-    uint8_t *b = g_buf;
-    put32(b, VLT_MAGIC);
-    put32(b + H_SEQ, cur < 0 ? 1 : seq + 1);
-    put32(b + H_LEN, (uint32_t)len);
-    hal_rng(b + H_NONCE, 24);
-    /* AD = magic + seq + len: подмена заголовка ломает расшифровку */
-    crypto_aead_lock(b + STORE_VAULT_HDR, b + H_MAC, k_vault, b + H_NONCE,
-                     b, H_NONCE, plain, len);
-    finish_header(b, (uint32_t)len);
-    return write_slot_from_gbuf(target);
+    uint8_t hdr[STORE_VAULT_HDR];
+    put32(hdr, VLT_MAGIC);
+    put32(hdr + H_SEQ, seq);
+    put32(hdr + H_LEN, (uint32_t)len);
+    hal_rng(hdr + H_NONCE, 24);
+    /* шифруем на месте: RAM токена — один буфер на хранилище.
+       AD = magic + seq + len: подмена заголовка ломает расшифровку */
+    crypto_aead_lock(plain, hdr + H_MAC, k_vault, hdr + H_NONCE, hdr, H_NONCE, plain, len);
+    finish_header(hdr, plain, (uint32_t)len);
+    int r = write_blob(slot_off(target), hdr, plain, (uint32_t)len);
+    /* и обратно: открытый текст нужен дальше, MAC только что посчитан нами */
+    int back = crypto_aead_unlock(plain, hdr + H_MAC, k_vault, hdr + H_NONCE, hdr, H_NONCE, plain, len);
+    if (r == 0 && back == 0) {
+        g_cur = target;
+        g_cur_seq = seq;
+        g_cur_len = (uint32_t)len;
+    } else {
+        g_cur = -1;
+    }
+    return r == 0 && back == 0 ? 0 : -1;
 }
 
-int store_vault_load(const uint8_t k_vault[32], uint8_t *plain, size_t *len)
+int store_vault_load(const uint8_t k_vault[32], uint8_t *plain, size_t cap, size_t *len)
 {
-    int cur = vault_latest(NULL);
+    int cur = vault_latest();
     if (cur < 0) return -1;
-    if (slot_read_valid(cur, NULL) != 0) return -1;
-    uint32_t l = get32(g_buf + H_LEN);
-    if (l > STORE_PLAIN_MAX) return -1;
-    if (crypto_aead_unlock(plain, g_buf + H_MAC, k_vault, g_buf + H_NONCE, g_buf, H_NONCE,
-                           g_buf + STORE_VAULT_HDR, l) != 0)
+    uint8_t hdr[STORE_VAULT_HDR];
+    uint32_t off = slot_off(cur);
+    if (hal_flash_read(off, hdr, sizeof hdr) != 0) return -1;
+    uint32_t l = get32(hdr + H_LEN);
+    if (l > cap || l > g_cap) return -1;
+    if (hal_flash_read(off + STORE_VAULT_HDR, plain, l) != 0) return -1;
+    /* целостность проверена в vault_latest, но flash могли подменить между чтениями */
+    uint8_t chk[32];
+    memcpy(chk, hdr + H_CHECK, 32);
+    finish_header(hdr, plain, l);
+    if (crypto_verify32(chk, hdr + H_CHECK) != 0) { g_cur = -1; crypto_wipe(plain, l); return -1; }
+    if (crypto_aead_unlock(plain, hdr + H_MAC, k_vault, hdr + H_NONCE, hdr, H_NONCE, plain, l) != 0) {
+        crypto_wipe(plain, l);
         return -2;
+    }
     *len = l;
     return 0;
 }
 
-long store_vault_raw(uint8_t *out, size_t cap)
+long store_vault_raw(size_t off, uint8_t *out, size_t cap, size_t *total)
 {
-    int cur = vault_latest(NULL);
-    if (cur < 0 || slot_read_valid(cur, NULL) != 0) return -1;
-    size_t total = STORE_VAULT_HDR + get32(g_buf + H_LEN);
-    if (total > cap) return -1;
-    memcpy(out, g_buf, total);
-    return (long)total;
+    int cur = vault_latest();
+    if (cur < 0) return -1;
+    size_t all = STORE_VAULT_HDR + g_cur_len;
+    *total = all;
+    if (off > all) return -1;
+    size_t n = all - off < cap ? all - off : cap;
+    if (hal_flash_read(slot_off(cur) + (uint32_t)off, out, (uint32_t)n) != 0) return -1;
+    return (long)n;
 }
 
 int store_vault_put_raw(const uint8_t *blob, size_t len)
 {
-    if (len < STORE_VAULT_HDR || len > STORE_SLOT_BYTES) return -1;
+    if (len < STORE_VAULT_HDR || len - STORE_VAULT_HDR > g_cap) return -1;
     uint32_t ct = get32(blob + H_LEN);
-    if (get32(blob) != VLT_MAGIC || ct > STORE_PLAIN_MAX || STORE_VAULT_HDR + ct != len) return -1;
-    uint32_t seq = 0;
-    int cur = vault_latest(&seq);
-    memcpy(g_buf, blob, len);
-    /* seq входит в AD, поэтому его не меняем; но слот должен оказаться
-       «свежее» существующих — стираем второй слот */
-    uint8_t chk[32];
-    memcpy(chk, g_buf + H_CHECK, 32);
-    finish_header(g_buf, ct);
-    if (crypto_verify32(chk, g_buf + H_CHECK) != 0) return -1;
-    if (write_slot_from_gbuf(0) != 0) return -1;
-    memset(g_buf, 0xFF, STORE_SLOT_BYTES);
-    (void)cur; (void)seq;
-    return hal_flash_write_sectors(slot_off(1), g_buf, STORE_SLOT_BYTES);
+    if (get32(blob) != VLT_MAGIC || STORE_VAULT_HDR + ct != len) return -1;
+    uint8_t hdr[STORE_VAULT_HDR];
+    memcpy(hdr, blob, sizeof hdr);
+    finish_header(hdr, blob + STORE_VAULT_HDR, ct);
+    if (crypto_verify32(hdr + H_CHECK, blob + H_CHECK) != 0) return -1;
+    /* seq входит в AD, поэтому его не меняем: копия кладётся в слот A, слот B гасится */
+    if (write_blob(slot_off(0), blob, blob + STORE_VAULT_HDR, ct) != 0) return -1;
+    memset(g_sec, 0xFF, sizeof g_sec);
+    int r = hal_flash_write_sectors(slot_off(1), g_sec, STORE_SECTOR);
+    g_cur = -1;
+    return r;
 }
 
 int store_wipe(void)
 {
-    memset(g_buf, 0xFF, sizeof g_buf);
+    /* конфигурация (с K_token) и заголовки слотов — обеих разметок. Шифротекст
+       без K_token не расшифровать даже с паролем и K_pc, а стирать сотни КБ —
+       секунды: стираем только то, что делает токен чистым */
+    memset(g_sec, 0xFF, sizeof g_sec);
     int r = 0;
-    for (uint32_t off = 0; off < STORE_TOTAL_BYTES; off += STORE_SLOT_BYTES) {
-        uint32_t n = STORE_TOTAL_BYTES - off < STORE_SLOT_BYTES ? STORE_TOTAL_BYTES - off
-                                                                : STORE_SLOT_BYTES;
-        r |= hal_flash_write_sectors(off, g_buf, n);
+    r |= hal_flash_write_sectors(cfg_off(0), g_sec, STORE_SECTOR);
+    r |= hal_flash_write_sectors(cfg_off(1), g_sec, STORE_SECTOR);
+    if (g_slot) {
+        r |= hal_flash_write_sectors(slot_off(0), g_sec, STORE_SECTOR);
+        r |= hal_flash_write_sectors(slot_off(1), g_sec, STORE_SECTOR);
     }
+    uint32_t base = legacy_base();
+    r |= hal_flash_write_sectors(base, g_sec, STORE_SECTOR);
+    r |= hal_flash_write_sectors(base + STORE_SECTOR, g_sec, STORE_SECTOR);
+    r |= hal_flash_write_sectors(base + STORE_CFG_BYTES, g_sec, STORE_SECTOR);
+    r |= hal_flash_write_sectors(base + STORE_CFG_BYTES + LEGACY_SLOT_BYTES, g_sec, STORE_SECTOR);
+    g_cur = -1;
     return r;
+}
+
+/* ---------------- разметка: выбор и перенос старой ---------------- */
+
+static uint32_t choose_slot(size_t buf_cap)
+{
+    /* слот вмещает заголовок и весь буфер (восстановление кладёт туда бэкап целиком) */
+    uint32_t want = (uint32_t)((buf_cap + STORE_SECTOR - 1) / STORE_SECTOR * STORE_SECTOR);
+    uint32_t avail = region() > STORE_CFG_BYTES ? (region() - STORE_CFG_BYTES) / 2u / STORE_SECTOR * STORE_SECTOR : 0;
+    return want < avail ? want : avail;
+}
+
+/* Перенос из последних 80 КБ: копия хранилища — как есть (seq и шифротекст не
+ * меняются), затем конфигурация на новое место. Выдернули посередине — старая
+ * разметка цела до записи новой конфигурации, перенос повторится. */
+static int migrate_legacy(const pm_config *old, uint8_t *buf, size_t buf_cap)
+{
+    uint32_t base = legacy_base();
+    uint32_t s, l, best_seq = 0, best_len = 0;
+    int best = -1;
+    for (int i = 0; i < 2; i++) {
+        uint32_t off = base + STORE_CFG_BYTES + (uint32_t)i * LEGACY_SLOT_BYTES;
+        if (blob_check(off, LEGACY_SLOT_BYTES, &s, &l) == 0 && (best < 0 || s > best_seq)) {
+            best = i; best_seq = s; best_len = l;
+        }
+    }
+    /* новый слот A не должен задевать старую область: иначе только конфигурация */
+    if (best >= 0 && slot_off(0) + g_slot <= base) {
+        uint32_t total = STORE_VAULT_HDR + best_len;
+        if (total > buf_cap) return -1;
+        if (hal_flash_read(base + STORE_CFG_BYTES + (uint32_t)best * LEGACY_SLOT_BYTES, buf, total) != 0) return -1;
+        if (write_blob(slot_off(0), buf, buf + STORE_VAULT_HDR, best_len) != 0) return -1;
+        memset(g_sec, 0xFF, sizeof g_sec);
+        if (hal_flash_write_sectors(slot_off(1), g_sec, STORE_SECTOR) != 0) return -1;
+        crypto_wipe(buf, total);
+    } else if (best >= 0) {
+        return -1;   /* flash слишком мала для новой разметки: оставляем как было */
+    }
+    pm_config c = *old;
+    c.seq += 1;
+    int r = cfg_write(0, &c) | cfg_write(1, &c);
+    crypto_wipe(&c, sizeof c);
+    return r;
+}
+
+size_t store_init(uint8_t *buf, size_t buf_cap)
+{
+    pm_config c;
+    uint32_t slot = 0;
+    g_cur = -1;
+    if (cfg_latest(&c, NULL, &slot) == 0 && slot >= STORE_SECTOR && slot % STORE_SECTOR == 0 &&
+        2u * slot + STORE_CFG_BYTES <= region()) {
+        g_slot = slot;                                      /* разметка уже выбрана */
+    } else {
+        g_slot = choose_slot(buf_cap);
+        if (cfg_latest_at(legacy_base(), legacy_base() + STORE_SECTOR, 1, &c, NULL, NULL) == 0)
+            migrate_legacy(&c, buf, buf_cap);
+    }
+    crypto_wipe(&c, sizeof c);
+    size_t by_slot = g_slot > STORE_VAULT_HDR ? g_slot - STORE_VAULT_HDR : 0;
+    size_t by_ram = buf_cap > STORE_VAULT_HDR ? buf_cap - STORE_VAULT_HDR : 0;
+    g_cap = by_slot < by_ram ? by_slot : by_ram;
+    return g_cap;
 }
