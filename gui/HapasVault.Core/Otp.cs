@@ -60,6 +60,26 @@ public sealed class OtpSecret
     public string? Issuer { get; init; }
     public string? Account { get; init; }
 
+    /// <summary>Тот же секрет кода входа плюс данные подтверждений Steam.</summary>
+    public OtpSecret WithMobile(SteamMobile mobile) =>
+        new(Kind, Secret, Algorithm, Digits, Period) { Issuer = Issuer, Account = Account, Mobile = mobile };
+
+    /// <summary>identity_secret, вставленный отдельно (Base64, как в maFile).</summary>
+    public static SteamMobile ParseIdentity(string input)
+    {
+        byte[] id;
+        try
+        {
+            id = Convert.FromBase64String(input.Trim());
+        }
+        catch (FormatException)
+        {
+            throw new FormatException("identity_secret — строка Base64 из maFile, например «AbCd…=».");
+        }
+        if (id.Length is < MinSecret or > MaxSecret) throw new FormatException("identity_secret должен быть 10–64 байта.");
+        return new SteamMobile(id);
+    }
+
     public string Describe() => Kind == OtpKind.Steam
         ? Mobile != null ? "Steam Guard · код входа и подтверждения" : "Steam Guard · 5 символов · 30 с"
         : $"TOTP · {(Algorithm == OtpAlgorithm.Sha1 ? "SHA1" : "SHA256")} · {Digits} цифр · {Period} с";

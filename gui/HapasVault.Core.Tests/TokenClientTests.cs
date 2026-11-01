@@ -31,14 +31,20 @@ public class TokenClientTests
         await SetupFresh(c);
         var empty = await c.GetInfoAsync();
         Assert.True(empty.StorageKnown);
-        Assert.Equal(32768u, empty.CapacityBytes);
-        Assert.True(empty.EstimatedMoreEntries > 200);   // пустой токен: сотни обычных записей
+        Assert.InRange(empty.CapacityBytes, 190_000u, 200_000u);   // симулятор: буфер как у RP2040
+        Assert.True(empty.EstimatedMoreEntries > 1500);             // пустой токен: тысячи обычных записей
 
-        for (int i = 0; i < 10; i++) await c.AddAsync("Кат", $"Сайт {i}", "user", new string('p', 900));
+        for (int i = 0; i < 60; i++) await c.AddAsync("Кат", $"Сайт {i}", "user", new string('p', 900));
         var full = await c.GetInfoAsync();
-        Assert.True(full.UsedBytes > empty.UsedBytes + 9000);
-        Assert.InRange(full.StorageFraction, 0.27, 0.35);
-        Assert.InRange(full.EstimatedMoreEntries, 20u, 26u);   // записи по ~920 байт: осталось ~22 КБ
+        Assert.True(full.UsedBytes > empty.UsedBytes + 54000);
+        Assert.InRange(full.StorageFraction, 0.27, 0.32);
+        uint expected = full.FreeBytes / ((full.UsedBytes - 6) / 60);   // записи по ~920 байт
+        Assert.InRange(full.EstimatedMoreEntries, expected - 2, expected + 2);
+        Assert.Equal(60, (await c.ListAsync()).Count);                  // список — страницами
+
+        // бэкап больше кадра (8 КБ) — частями, и восстанавливается на чистом токене
+        byte[] backup = await c.BackupAsync();
+        Assert.True(backup.Length > 54000);
 
         await c.LockAsync();
         Assert.False((await c.GetInfoAsync()).StorageKnown);

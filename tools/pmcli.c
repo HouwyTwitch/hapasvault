@@ -215,7 +215,7 @@ int main(int argc, char **argv)
             crypto_wipe(p1, sizeof p1); crypto_wipe(p2, sizeof p2);
         }
         else if (!strcmp(cmd, "restore")) {
-            static uint8_t blob[PM_MAX_FRAME];
+            static uint8_t blob[PM_MAX_BACKUP];
             size_t blen = 0;
             if (arg) {
                 FILE *f = fopen(arg, "rb");
@@ -264,7 +264,7 @@ int main(int argc, char **argv)
         else if (!strcmp(cmd, "del") && arg) { if (report(pmc_delete(&g_c, (uint32_t)atoi(arg))) == 0) printf("  удалено\n"); }
         else if (!strcmp(cmd, "log")) report(pmc_log(&g_c, on_log, NULL));
         else if (!strcmp(cmd, "backup") && arg) {
-            static uint8_t blob[PM_MAX_FRAME];
+            static uint8_t blob[PM_MAX_BACKUP];
             size_t n;
             if (report(pmc_backup(&g_c, blob, sizeof blob, &n)) == 0) {
                 FILE *f = fopen(arg, "wb");

@@ -57,7 +57,22 @@ public sealed partial class ShellViewModel : ObservableObject
     public ThemeManager Theme { get; }
     public SnackbarViewModel Snackbar { get; } = new();
     /// <summary>Steam Web и сессии ПК; в демо — заглушки (сеть не трогаем).</summary>
-    public Core.Steam.ISteamWeb SteamWeb => IsDemo ? _demoSteam ??= new DemoSteamWeb() : _steam ??= new Core.Steam.SteamWeb();
+    public Core.Steam.ISteamWeb SteamWeb => IsDemo ? _demoSteam ??= new DemoSteamWeb() : _steam ??= CreateSteamWeb();
+
+    private Core.Steam.SteamWeb CreateSteamWeb()
+    {
+        System.Net.IWebProxy? proxy = null;
+        try { proxy = Core.Steam.SteamWeb.ParseProxy(Settings.SteamProxy); }
+        catch (FormatException) { }   // неверный — как пусто; настройки его не сохранят
+        return new Core.Steam.SteamWeb(proxy: proxy);
+    }
+
+    /// <summary>Сменился прокси: следующий запрос к Steam пойдёт через новый.</summary>
+    public void ResetSteamWeb()
+    {
+        (_steam as IDisposable)?.Dispose();
+        _steam = null;
+    }
     public Core.Steam.ISteamSessionStore SteamSessions => IsDemo ? _demoSessions : _sessions ??= Services.SteamSessions.Create();
     private Core.Steam.ISteamWeb? _steam, _demoSteam;
     private Core.Steam.ISteamSessionStore? _sessions;

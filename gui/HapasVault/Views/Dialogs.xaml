@@ -130,6 +130,11 @@
             <TextBox Style="{StaticResource TextField.Mono}" c:A.Label="Секрет или ссылка otpauth://" c:A.Icon="{StaticResource Icon.Key}"
                      c:A.Supporting="{Binding OtpHint}" c:A.Error="{Binding OtpError}"
                      Text="{Binding OtpInput, UpdateSourceTrigger=PropertyChanged}" />
+            <TextBox Style="{StaticResource TextField.Mono}" Margin="0,8,0,0" c:A.Label="identity_secret — подтверждения обменов (необязательно)"
+                     c:A.Icon="{StaticResource Icon.SwapHoriz}" c:A.Error="{Binding IdentityError}"
+                     c:A.Supporting="Из maFile; останется на токене. Без него — только код входа"
+                     Text="{Binding IdentityInput, UpdateSourceTrigger=PropertyChanged}"
+                     Visibility="{Binding IdentityVisible, Converter={StaticResource VisibleWhen}}" />
             <DockPanel Margin="12,6,0,0" Visibility="{Binding OtpStatus, Converter={StaticResource VisibleWhen}}">
               <c:Icon DockPanel.Dock="Left" Data="{StaticResource Icon.CheckCircle}" Width="18" Height="18" Margin="0,0,8,0"
                       Foreground="{DynamicResource Primary}" />

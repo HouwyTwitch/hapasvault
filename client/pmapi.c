@@ -12,6 +12,8 @@
 /* Поток после таймаута рассинхронизирован, поэтому при PMC_E_IO соединение
  * закрывается: следующий вызов вернёт PMC_E_IO сразу, GUI переподключится. */
 #define PMAPI_IO_TIMEOUT_MS 5000
+/* USB: запись полного хранилища на плате — секунды (сотни секторов flash) */
+#define PMAPI_USB_TIMEOUT_MS 20000
 
 enum { T_NONE, T_TCP, T_SERIAL };
 
@@ -45,7 +47,7 @@ static int save_id(pmapi *h)
 }
 
 int pmapi_version(void) { return PMAPI_VERSION; }
-uint32_t pmapi_max_backup(void) { return PM_MAX_FRAME; }
+uint32_t pmapi_max_backup(void) { return PM_MAX_BACKUP; }
 
 pmapi *pmapi_create(const char *identity_path)
 {
@@ -103,7 +105,7 @@ int pmapi_attach_serial(pmapi *h, const char *path)
     pmapi_detach(h);
     /* X25519 на Cortex-M0+ — десятки миллисекунд, рукопожатие и запись flash — до секунды */
     int busy = 0;
-    h->serial = pm_serial_open(path, PMAPI_IO_TIMEOUT_MS, &busy);
+    h->serial = pm_serial_open(path, PMAPI_USB_TIMEOUT_MS, &busy);
     if (h->serial == PM_BAD_SERIAL) return busy ? PMC_E_BUSY : PMC_E_NO_DEVICE;
     h->transport = T_SERIAL;
     return io(h, h->c.paired ? pmc_connect(&h->c) : 0);

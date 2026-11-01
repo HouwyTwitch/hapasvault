@@ -2,13 +2,17 @@
 /*
  * Хранение на flash токена.
  *
- * Разметка (секторы по 4 КБ):
- *   [0]      конфигурация, копия A
- *   [1]      конфигурация, копия B
- *   [2..10]  хранилище, слот A (36 КБ)
- *   [11..19] хранилище, слот B (36 КБ)
+ * Разметка привязана к КОНЦУ области токена (hal_flash_size()), секторы по 4 КБ:
+ *   [конец − 8 КБ − 2S, конец − 8 КБ − S)  хранилище, слот A
+ *   [конец − 8 КБ − S,  конец − 8 КБ)      хранилище, слот B
+ *   [конец − 8 КБ, конец − 4 КБ)          конфигурация, копия A
+ *   [конец − 4 КБ, конец)                 конфигурация, копия B
+ * Размер слота S выбирается при первой настройке по RAM токена (буфер открытого
+ * хранилища) и размеру flash и записывается в конфигурацию: обновление прошивки
+ * разметку не сдвигает. Старая разметка (всё в последних 80 КБ, слоты по 36 КБ)
+ * переносится при первом запуске.
  *
- * Каждая запись несёт счётчик seq и контрольную сумму BLAKE2b. Запись всегда
+ * Каждая копия несёт счётчик seq и контрольную сумму BLAKE2b. Запись всегда
  * идёт в слот, где лежит СТАРАЯ копия, поэтому выдёргивание токена во время
  * записи оставляет предыдущую версию целой (A/B-схема).
  *
@@ -22,13 +26,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define STORE_CFG_SECTORS     2u
-#define STORE_SLOT_SECTORS    9u
-#define STORE_SLOT_BYTES      (STORE_SLOT_SECTORS * 4096u)
+#define STORE_SECTOR          4096u
+#define STORE_CFG_BYTES       (2u * STORE_SECTOR)
 #define STORE_VAULT_HDR       84u          /* см. store.c */
-#define STORE_CT_MAX          (STORE_SLOT_BYTES - STORE_VAULT_HDR)
-#define STORE_PLAIN_MAX       32768u       /* ~200-300 записей */
-#define STORE_TOTAL_BYTES     ((STORE_CFG_SECTORS + 2u * STORE_SLOT_SECTORS) * 4096u)
+#define STORE_LEGACY_BYTES    (20u * STORE_SECTOR)   /* старая разметка: последние 80 КБ */
 
 #define CFG_PAIRED 0x01
 #define CFG_SETUP  0x02
@@ -42,6 +43,14 @@ typedef struct {
     uint32_t fails;            /* неверных паролей подряд: переживает перезагрузку */
 } pm_config;
 
+/* Подготовить хранилище: прочитать разметку (или выбрать для чистого токена,
+ * или перенести старую). buf — рабочий буфер токена (буфер открытого хранилища),
+ * нужен для переноса. Возвращает ёмкость хранилища в байтах открытого текста. */
+size_t store_init(uint8_t *buf, size_t buf_cap);
+
+/* Ёмкость (байт открытого текста), как вернула store_init. */
+size_t store_capacity(void);
+
 /* Загрузить самую свежую целую копию конфигурации. 0 = ок, -1 = нет. */
 int store_config_load(pm_config *cfg);
 /* Записать (seq увеличивается автоматически). 0 = ок. */
@@ -50,21 +59,25 @@ int store_config_save(pm_config *cfg);
 /* Есть ли хотя бы одна целая копия хранилища. */
 int store_vault_exists(void);
 
-/* Зашифровать и записать открытый текст хранилища. 0 = ок. */
-int store_vault_save(const uint8_t k_vault[32], const uint8_t *plain, size_t len);
+/* Зашифровать и записать открытый текст хранилища. Шифрует на месте и после
+ * записи расшифровывает обратно: plain после вызова прежний. 0 = ок. */
+int store_vault_save(const uint8_t k_vault[32], uint8_t *plain, size_t len);
 
-/* Расшифровать самую свежую целую копию.
+/* Расшифровать самую свежую целую копию в plain (cap — его размер).
  * 0 = ок, -1 = нет хранилища, -2 = неверный ключ. */
-int store_vault_load(const uint8_t k_vault[32], uint8_t *plain, size_t *len);
+int store_vault_load(const uint8_t k_vault[32], uint8_t *plain, size_t cap, size_t *len);
 
-/* Выдать сырую (зашифрованную) копию слота для резервного копирования.
- * Возвращает длину или -1. */
-long store_vault_raw(uint8_t *out, size_t cap);
+/* Резервная копия — сырой (зашифрованный) слот, по частям.
+ * Пишет до cap байт с позиции off, *total — полный размер. Возвращает длину или -1. */
+long store_vault_raw(size_t off, uint8_t *out, size_t cap, size_t *total);
 
 /* Положить сырую копию из бэкапа (проверяется только целостность формата). */
 int store_vault_put_raw(const uint8_t *blob, size_t len);
 
 /* Стереть всё. */
 int store_wipe(void);
+
+/* Смещение слота (0 — A, 1 — B) в области токена; для тестов. */
+uint32_t store_slot_offset(int slot);
 
 #endif

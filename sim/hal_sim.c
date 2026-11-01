@@ -15,9 +15,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define SIM_FLASH_SIZE (256u * 1024u)
+/* 1 МБ области токена (на Pico — 1,75 МБ) и буфер хранилища как у RP2040 */
+#define SIM_FLASH_SIZE  (1024u * 1024u)
+#define SIM_VAULT_BUF   (192u * 1024u)
+#define OLD_FILE_SIZE   (256u * 1024u)   /* файлы прежних версий: разметка в первых 80 КБ */
+#define OLD_LAYOUT      (80u * 1024u)
 
 static uint8_t     g_flash[SIM_FLASH_SIZE];
+static uint8_t     g_vault_buf[SIM_VAULT_BUF];
 static const char *g_path;
 static uint64_t    g_offset_ms;
 static int         g_quiet;
@@ -40,8 +45,16 @@ int hal_sim_open(const char *path)
     FILE *f = fopen(path, "rb");
     if (f) {
         size_t n = fread(g_flash, 1, sizeof g_flash, f);
-        (void)n;
         fclose(f);
+        if (n == OLD_FILE_SIZE) {
+            /* старый файл: его 80 КБ — это «последние 80 КБ flash» прежней прошивки;
+               кладём туда, где их ищет перенос разметки (core/store.c) */
+            memmove(g_flash + SIM_FLASH_SIZE - OLD_LAYOUT, g_flash, OLD_LAYOUT);
+            memset(g_flash, 0xFF, SIM_FLASH_SIZE - OLD_LAYOUT);
+            persist(0, SIM_FLASH_SIZE);
+        } else if (n < SIM_FLASH_SIZE) {
+            persist(0, SIM_FLASH_SIZE);
+        }
     } else {
         persist(0, SIM_FLASH_SIZE);
     }
@@ -54,6 +67,12 @@ void hal_sim_advance_ms(uint64_t ms) { g_offset_ms += ms; }
 void hal_sim_quiet(int q) { g_quiet = q; }
 
 uint32_t hal_flash_size(void) { return SIM_FLASH_SIZE; }
+
+uint8_t *hal_vault_buffer(size_t *cap)
+{
+    *cap = sizeof g_vault_buf;
+    return g_vault_buf;
+}
 
 int hal_flash_read(uint32_t off, void *buf, uint32_t len)
 {

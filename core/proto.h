@@ -25,7 +25,8 @@
 #ifndef PM_PROTO_H
 #define PM_PROTO_H
 
-#define PM_PROTO_VERSION   3   /* 3: подтверждения Steam; 2: OTP, UPDATE, тип OTP в LIST */
+#define PM_PROTO_VERSION   4   /* 4: ёмкость по RAM/flash, LIST страницами, бэкап частями;
+                                   3: подтверждения Steam; 2: OTP, UPDATE, тип OTP в LIST */
 
 /* Типы кадров */
 #define FR_PAIR    0x01
@@ -45,10 +46,11 @@
                                          used/capacity — байты открытого хранилища (used = 0, если закрыто) */
 #define CMD_SETUP_BEGIN   0x20  /* [rand_pc 32] -> [rand_token 32] */
 #define CMD_SETUP_COMMIT  0x21  /* [pw_hash 32] -> ok (хранилище создано и открыто) */
-#define CMD_RESTORE       0x22  /* [k_token 32][k_pc 32][pw_hash 32][backup...] -> ok */
+#define CMD_RESTORE       0x22  /* [k_token 32][k_pc 32][pw_hash 32][u8 с бэкапом] -> ok (бэкап — из RESTORE_DATA) */
+#define CMD_RESTORE_DATA  0x23  /* [u32 off][u32 total][часть бэкапа] -> ok; только до настройки, по порядку */
 #define CMD_UNLOCK        0x30  /* [k_pc 32][pw_hash 32] -> ok */
 #define CMD_LOCK          0x31  /* -> ok */
-#define CMD_LIST          0x40  /* -> [u16 n] n * {u32 id, str cat, str name, u8 otp_type} */
+#define CMD_LIST          0x40  /* [u32 пропустить первые] -> [u16 n][u8 ещё] n * {u32 id, str cat, str name, u8 otp_type} */
 #define CMD_GET           0x41  /* [u32 id] -> [str login][pw password] (секрет OTP не выдаётся) */
 #define CMD_ADD           0x42  /* [str cat][str name][str login][pw password][otp] -> [u32 id] */
 #define CMD_DELETE        0x43  /* [u32 id] -> ok */
@@ -57,7 +59,7 @@
 #define CMD_STEAM_CONF    0x46  /* [u32 id][u64 unix_time][u8 n][tag n] -> [key 20] (HMAC identity_secret) */
 #define CMD_STEAM_INFO    0x47  /* [u32 id][u8 flags] -> [u64 steamid][u8 n][revocation n, если flags&1] */
 #define CMD_LOG           0x50  /* -> [u8 n] n * {u32 uptime_s, u8 cmd, u8 status, u32 id} */
-#define CMD_BACKUP        0x51  /* -> зашифрованный блоб хранилища как есть */
+#define CMD_BACKUP        0x51  /* [u32 off] -> [u32 total][часть зашифрованного блоба хранилища] */
 #define CMD_FACTORY_RESET 0x60  /* (только открытое) -> ok, стирает всё, включая сопряжение */
 
 /* Флаги CMD_INFO */
@@ -90,7 +92,9 @@
 #define PM_USB_PID        0x0001u
 #define PM_USB_PRODUCT    "pmtoken"
 
-#define PM_MAX_FRAME      (40u * 1024u)
+#define PM_MAX_FRAME      (8u * 1024u)   /* хранилище больше кадра: бэкап и список — частями */
+#define PM_BACKUP_CHUNK   4096u
+#define PM_MAX_BACKUP     (1024u * 1024u)  /* верхняя граница бэкапа для буферов ПК */
 #define PM_MAX_STR        255u
 #define PM_MAX_PASSWORD   1024u
 

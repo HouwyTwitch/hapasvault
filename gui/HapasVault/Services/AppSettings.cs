@@ -38,6 +38,8 @@ public sealed class AppSettings
     public bool HideFromCapture { get; set; } = true;
     /// <summary>Раз в запуск спрашивать GitHub, нет ли новой версии.</summary>
     public bool CheckUpdates { get; set; } = true;
+    /// <summary>Прокси для Steam (http:// или socks5://); пусто — системный.</summary>
+    public string SteamProxy { get; set; } = "";
 
     private static readonly JsonSerializerOptions Json = new()
     {

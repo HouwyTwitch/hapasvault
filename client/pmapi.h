@@ -25,7 +25,7 @@
 #  define PMAPI __attribute__((visibility("default")))
 #endif
 
-#define PMAPI_VERSION 6   /* 6: занятое место в info; 5: подтверждения Steam; 4: USB (CDC) */
+#define PMAPI_VERSION 7   /* 7: хранилище больше кадра (бэкап до PM_MAX_BACKUP); 6: место в info */
 
 typedef struct pmapi pmapi;
 

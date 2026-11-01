@@ -17,8 +17,11 @@ static pm_session g_sess;
 
 static int      g_unlocked;
 static uint8_t  g_kvault[32];
-static uint8_t  g_plain[STORE_PLAIN_MAX];  /* расшифрованное хранилище (только в RAM) */
+static uint8_t *g_plain;          /* расшифрованное хранилище (только в RAM), буфер от HAL */
+static size_t   g_plain_cap;      /* размер буфера */
+static size_t   g_cap;            /* ёмкость хранилища: min(буфер, слот flash) */
 static size_t   g_plain_len;
+static size_t   g_restore_total, g_restore_have;   /* бэкап, принятый RESTORE_DATA в g_plain */
 
 static int      g_setup_pending;
 static uint8_t  g_seed[32];
@@ -59,8 +62,9 @@ static void log_event(uint8_t cmd, uint8_t st, uint32_t id)
 static void lock_vault(void)
 {
     crypto_wipe(g_kvault, sizeof g_kvault);
-    crypto_wipe(g_plain, sizeof g_plain);
+    if (g_plain) crypto_wipe(g_plain, g_plain_cap);
     g_plain_len = 0;
+    g_restore_total = g_restore_have = 0;
     g_unlocked = 0;
     if (g_setup_pending) { crypto_wipe(g_seed, sizeof g_seed); g_setup_pending = 0; }
 }
@@ -78,7 +82,9 @@ void token_public_key(uint8_t pub[32]) { crypto_x25519_public_key(pub, g_cfg.tok
 
 void token_init(void)
 {
+    if (!g_plain) g_plain = hal_vault_buffer(&g_plain_cap);
     lock_vault();
+    g_cap = store_init(g_plain, g_plain_cap);
     if (store_config_load(&g_cfg) != 0) {
         /* первое включение: свой статический ключ */
         memset(&g_cfg, 0, sizeof g_cfg);
@@ -155,7 +161,7 @@ static int v_migrate(void)
     size_t off = VH, len = g_plain_len, n = v_count();
     for (size_t i = 0; i < n; i++) {
         size_t sz = entry_size(g_plain, len, off, 1);
-        if (!sz || len + 1 > STORE_PLAIN_MAX) return -1;
+        if (!sz || len + 1 > g_cap) return -1;
         memmove(g_plain + off + sz + 1, g_plain + off + sz, len - off - sz);
         g_plain[off + sz] = 0;
         len++;
@@ -274,7 +280,7 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
         wire_put_u32(&w, (uint32_t)(hal_millis() / 1000u));
         /* занято / всего: сколько ещё записей поместится — видно в настройках */
         wire_put_u32(&w, g_unlocked ? (uint32_t)g_plain_len : 0u);
-        wire_put_u32(&w, STORE_PLAIN_MAX);
+        wire_put_u32(&w, g_cap);
         break;
     }
 
@@ -314,19 +320,38 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
         break;
     }
 
+    case CMD_RESTORE_DATA: {
+        /* бэкап больше кадра: части по порядку копятся в буфере хранилища (оно ещё не открыто) */
+        uint32_t off = wire_u32(&r), total = wire_u32(&r);
+        if (r.err || g_unlocked) { st = r.err ? ST_BAD_ARGS : ST_ALREADY_SETUP; break; }
+        if (g_cfg.flags & CFG_SETUP) { st = ST_ALREADY_SETUP; break; }
+        if (total < STORE_VAULT_HDR || total > g_cap + STORE_VAULT_HDR || r.n > total - off ||
+            off != g_restore_have || (off && total != g_restore_total)) {
+            g_restore_total = g_restore_have = 0;
+            st = total > g_cap + STORE_VAULT_HDR ? ST_FULL : ST_BAD_ARGS;
+            break;
+        }
+        memcpy(g_plain + off, r.p, r.n);
+        g_restore_total = total;
+        g_restore_have = off + r.n;
+        break;
+    }
+
     case CMD_RESTORE: {
         const uint8_t *k_tok = wire_bytes(&r, 32);
         const uint8_t *k_pc = wire_bytes(&r, 32);
         const uint8_t *pw_hash = wire_bytes(&r, 32);
-        if (r.err) { st = ST_BAD_ARGS; break; }
+        uint8_t with_backup = wire_u8(&r);
+        if (r.err || r.n) { st = ST_BAD_ARGS; break; }
         if (g_cfg.flags & CFG_SETUP) { st = ST_ALREADY_SETUP; break; }
-        const uint8_t *blob = r.p;
-        size_t blob_len = r.n;
+        if (with_backup && (g_restore_total == 0 || g_restore_have != g_restore_total)) { st = ST_BAD_ARGS; break; }
+        size_t blob_len = with_backup ? g_restore_total : 0;
+        g_restore_total = g_restore_have = 0;
         pm_vault_key(g_kvault, k_tok, k_pc, pw_hash);
         if (blob_len) {
             size_t pl;
-            if (store_vault_put_raw(blob, blob_len) != 0) { st = ST_BAD_ARGS; lock_vault(); break; }
-            if (store_vault_load(g_kvault, g_plain, &pl) != 0) {
+            if (store_vault_put_raw(g_plain, blob_len) != 0) { st = ST_BAD_ARGS; lock_vault(); break; }
+            if (store_vault_load(g_kvault, g_plain, g_plain_cap, &pl) != 0) {
                 store_wipe();                           /* не тот ключ: не оставляем мусор */
                 store_config_save(&g_cfg);
                 st = ST_WRONG_KEY; lock_vault(); break;
@@ -355,7 +380,7 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
         lock_vault();
         pm_vault_key(g_kvault, g_cfg.k_token, k_pc, pw_hash);
         size_t pl;
-        int lr = store_vault_load(g_kvault, g_plain, &pl);
+        int lr = store_vault_load(g_kvault, g_plain, g_plain_cap, &pl);
         if (lr != 0) {
             lock_vault();
             if (lr == -2) register_fail();
@@ -377,21 +402,32 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
         break;
 
     case CMD_LIST: {
+        /* страницами: клиент просит пропустить уже полученные записи */
+        uint32_t skip = wire_u32(&r);
+        if (r.err || r.n) { st = ST_BAD_ARGS; break; }
         if (!g_unlocked) { st = ST_LOCKED; break; }
-        uint16_t n = v_count();
-        wire_put_u16(&w, n);
+        size_t head = w.n;
+        wire_put_u16(&w, 0);
+        wire_put_u8(&w, 0);
+        uint16_t n = 0, total = v_count();
         size_t off = VH;
-        for (unsigned i = 0; i < n; i++) {
+        for (unsigned i = 0; i < total; i++) {
             size_t sz = v_entry_size(off);
             if (!sz) break;
             const uint8_t *e = g_plain + off;
+            off += sz;
+            if (i < skip) continue;
+            size_t need = 4u + 1u + e[4] + 1u + e[5 + e[4]] + 1u;
+            if (w.cap - w.n < need) { w.p[head + 2] = 1; break; }   /* ещё есть */
             wire_put_u32(&w, wire_get32(e));
             wire_put_bytes(&w, e + 4, 1u + e[4]);                 /* cat */
             wire_put_bytes(&w, e + 5 + e[4], 1u + e[5 + e[4]]);   /* name */
-            const uint8_t *otp = v_entry_otp(off);
+            const uint8_t *otp = v_entry_otp(off - sz);
             wire_put_u8(&w, otp[0] ? otp[1] : OTP_NONE);
-            off += sz;
+            n++;
         }
+        w.p[head] = (uint8_t)n;
+        w.p[head + 1] = (uint8_t)(n >> 8);
         break;
     }
 
@@ -426,7 +462,7 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
         if (!no_otp_field && read_otp(&r, &otp, &ol) != 0) { st = ST_BAD_ARGS; break; }
         if (r.err || r.n || nl == 0 || pl > PM_MAX_PASSWORD) { st = ST_BAD_ARGS; break; }
         size_t body_len = start - (no_otp_field ? 0 : 1 + ol);
-        if (g_plain_len + 4 + body_len + 1 + ol > STORE_PLAIN_MAX || v_count() == 0xFFFF ||
+        if (g_plain_len + 4 + body_len + 1 + ol > g_cap || v_count() == 0xFFFF ||
             v_next_id() >= 0x00FFFFFFu) { st = ST_FULL; break; }
         uint32_t id = v_next_id();
         size_t old_len = g_plain_len;
@@ -482,7 +518,7 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
         if (ol) memcpy(entry + el, otp, ol);
         el += ol;
         size_t sz = v_entry_size((size_t)off);
-        if (g_plain_len - sz + el > STORE_PLAIN_MAX) { crypto_wipe(entry, el); st = ST_FULL; break; }
+        if (g_plain_len - sz + el > g_cap) { crypto_wipe(entry, el); st = ST_FULL; break; }
         size_t tail = g_plain_len - (size_t)off - sz;
         memmove(g_plain + off + el, g_plain + off + sz, tail);
         memcpy(g_plain + off, entry, el);
@@ -594,11 +630,16 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
     }
 
     case CMD_BACKUP: {
+        uint32_t boff = wire_u32(&r);
+        if (r.err || r.n) { st = ST_BAD_ARGS; break; }
         if (!g_unlocked) { st = ST_LOCKED; break; }
-        long n = store_vault_raw(w.p + w.n, w.cap - w.n);
-        if (n < 0) { st = ST_FLASH; break; }
+        size_t total = 0, room = w.cap - w.n - 4;
+        if (room > PM_BACKUP_CHUNK) room = PM_BACKUP_CHUNK;
+        long n = store_vault_raw(boff, w.p + w.n + 4, room, &total);
+        if (n < 0) { st = boff ? ST_BAD_ARGS : ST_FLASH; break; }
+        wire_put_u32(&w, (uint32_t)total);
         w.n += (size_t)n;
-        do_log = 1;
+        do_log = boff == 0;             /* в журнал — один раз на копию */
         break;
     }
 

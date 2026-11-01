@@ -2,8 +2,11 @@
 /*
  * HAL для RP2040 (Pico) и RP2350 (Pico 2).
  *
- * flash: последние STORE_TOTAL_BYTES внешней QSPI-flash; запись посекторно через
- *        flash_safe_execute (прерывания выключены только на один сектор).
+ * flash: всё после первых FW_RESERVE (место под прошивку) до конца чипа; размер
+ *        чипа — по JEDEC ID. Запись посекторно через flash_safe_execute
+ *        (прерывания выключены только на один сектор), сторожевой таймер — между ними.
+ * RAM:   буфер открытого хранилища — вся свободная куча после прошивки, поэтому
+ *        ёмкость сама подстраивается под чип (RP2040 ~190 КБ, RP2350 ~450 КБ).
  * RNG:   пул BLAKE2b из нескольких независимых источников (pico_rand — на RP2350
  *        это аппаратный TRNG; биты ROSC; шум АЦП датчика температуры; время),
  *        выдача — «быстрое стирание ключа»: каждый вызов перешифровывает пул.
@@ -18,19 +21,27 @@
 #include "hardware/flash.h"
 #include "hardware/structs/rosc.h"
 #include "hardware/sync.h"
+#include "hardware/watchdog.h"
 #include "pico/flash.h"
 #include "pico/rand.h"
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
+#include <stdlib.h>
 #include <string.h>
 
-#define REGION_SIZE  STORE_TOTAL_BYTES
-#define REGION_OFF   (PICO_FLASH_SIZE_BYTES - REGION_SIZE)
+/* Первые 256 КБ — прошивке (сейчас ~75 КБ): обновление не заденет хранилище.
+ * Само хранилище привязано к концу flash (core/store.c). */
+#define FW_RESERVE   (256u * 1024u)
+#define HEAP_MARGIN  (16u * 1024u)      /* на мелкие malloc newlib */
 
-_Static_assert(REGION_SIZE % FLASH_SECTOR_SIZE == 0, "область токена — целые секторы");
 _Static_assert(HAL_FLASH_SECTOR == FLASH_SECTOR_SIZE, "размер сектора");
 
 extern char __flash_binary_end;   /* из линкер-скрипта pico-sdk */
+extern char __end__, __HeapLimit;  /* свободная RAM после .bss */
+
+static uint32_t g_flash_bytes = PICO_FLASH_SIZE_BYTES;
+#define REGION_OFF  FW_RESERVE
+#define REGION_SIZE (g_flash_bytes - FW_RESERVE)
 
 /* ---------------- время ---------------- */
 
@@ -52,6 +63,36 @@ typedef struct {
     const uint8_t *data;    /* в RAM */
 } sector_job;
 
+/* Размер чипа по JEDEC ID (команда 0x9F): третий байт — log2 объёма. */
+static void read_jedec(void *p)
+{
+    uint8_t tx[4] = {0x9F, 0, 0, 0}, rx[4] = {0};
+    flash_do_cmd(tx, rx, sizeof tx);
+    *(uint8_t *)p = rx[3];
+}
+
+static void detect_flash(void)
+{
+    uint8_t log2 = 0;
+    if (flash_safe_execute(read_jedec, &log2, 1000) == PICO_OK && log2 >= 20 && log2 <= 24)
+        g_flash_bytes = 1u << log2;    /* 1..16 МБ: окно XIP — 16 МБ */
+}
+
+uint8_t *hal_vault_buffer(size_t *cap)
+{
+    static uint8_t *buf;
+    static size_t size;
+    if (!buf) {
+        size_t heap = (size_t)((uintptr_t)&__HeapLimit - (uintptr_t)&__end__);
+        size = heap > HEAP_MARGIN + 64u * 1024u ? (heap - HEAP_MARGIN) / FLASH_SECTOR_SIZE * FLASH_SECTOR_SIZE
+                                                : 32u * 1024u;
+        buf = malloc(size);
+        while (!buf && size > 32u * 1024u) { size -= FLASH_SECTOR_SIZE; buf = malloc(size); }
+    }
+    *cap = buf ? size : 0;
+    return buf;
+}
+
 static void write_sector(void *p)
 {
     const sector_job *j = p;
@@ -67,6 +108,7 @@ int hal_flash_write_sectors(uint32_t off, const void *buf, uint32_t len)
     for (uint32_t done = 0; done < len; done += FLASH_SECTOR_SIZE) {
         sector_job j = {REGION_OFF + off + done, src + done};
         if (flash_safe_execute(write_sector, &j, 1000) != PICO_OK) return -1;
+        watchdog_update();             /* полное хранилище — сотни секторов */
         /* проверка записи: XIP-кэш сброшен flash_range_program */
         if (memcmp((const void *)(XIP_BASE + j.off), j.data, FLASH_SECTOR_SIZE) != 0) return -1;
     }
@@ -180,7 +222,9 @@ int board_init(void)
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 #endif
     gather_entropy();
+    detect_flash();
     /* прошивка не должна заходить в область хранилища */
     if ((uintptr_t)&__flash_binary_end > XIP_BASE + REGION_OFF) return -1;
+    if (g_flash_bytes <= FW_RESERVE + 64u * 1024u) return -1;
     return 0;
 }

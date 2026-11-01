@@ -92,6 +92,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         AutoTypeEnter = s.AutoTypeEnter;
         HideFromCapture = s.HideFromCapture;
         CheckUpdates = s.CheckUpdates;
+        SteamProxy = s.SteamProxy;
         Connection = s.Connection;
         _loading = false;
         shell.PropertyChanged += (_, e) =>
@@ -150,6 +151,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _autoTypeEnter;
     [ObservableProperty] private bool _hideFromCapture;
     [ObservableProperty] private bool _checkUpdates;
+    [ObservableProperty] private string _steamProxy = "";
+    [ObservableProperty] private string? _steamProxyError;
+    [ObservableProperty] private string _steamStatus = "Подтверждения Steam идут на steamcommunity.com, вход — через api.steampowered.com";
+    [ObservableProperty] private bool _steamChecking;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(ShowPort))] private TokenConnection _connection;
     public bool ShowPort => Connection != TokenConnection.Usb;
 
@@ -231,6 +236,36 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (_loading) return;
         change(_shell.Settings);
         _shell.Settings.Save();
+    }
+
+    [RelayCommand]
+    private void ApplySteamProxy()
+    {
+        try
+        {
+            Core.Steam.SteamWeb.ParseProxy(SteamProxy);
+        }
+        catch (FormatException e)
+        {
+            SteamProxyError = e.Message;
+            return;
+        }
+        SteamProxyError = null;
+        _shell.Settings.SteamProxy = SteamProxy.Trim();
+        _shell.Settings.Save();
+        _shell.ResetSteamWeb();
+        _shell.Snackbar.Show(SteamProxy.Trim().Length > 0 ? "Steam теперь через прокси" : "Steam — через системные настройки сети");
+    }
+
+    [RelayCommand]
+    private async Task CheckSteam()
+    {
+        if (_shell.SteamWeb is not Core.Steam.SteamWeb web) { SteamStatus = "В демо-режиме сеть не проверяется"; return; }
+        SteamChecking = true;
+        SteamStatus = "Проверяю…";
+        var r = await web.ProbeAsync();
+        SteamChecking = false;
+        SteamStatus = string.Join("\n", r.Select(x => x.Error == null ? $"✓ {x.Host} доступен" : $"✗ {x.Error}"));
     }
 
     [RelayCommand]
