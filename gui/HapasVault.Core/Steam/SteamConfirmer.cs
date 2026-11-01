@@ -58,7 +58,7 @@ public sealed class SteamConfirmer(ITokenClient token, uint entryId, ISteamWeb w
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public uint EntryId => entryId;
-    public bool HasSession => (_session ??= store.Load(entryId)) != null;
+    public bool HasSession => (_session ??= store.Load(entryId))?.IsLoggedIn == true;
 
     private SteamKeySource Key => (t, tag) => token.GetSteamConfirmationKeyAsync(entryId, t, tag);
 
@@ -67,11 +67,12 @@ public sealed class SteamConfirmer(ITokenClient token, uint entryId, ISteamWeb w
     {
         var cred = await token.GetAsync(entryId);
         var info = await token.GetSteamInfoAsync(entryId);
-        var s = await web.LoginAsync(cred.Login, cred.Password, async () => (await token.GetOtpAsync(entryId)).Code, ct);
+        // код Steam Guard — по часам Steam (как Modern-SDA): часы ПК могут убежать
+        var s = await web.LoginAsync(cred.Login, cred.Password, async at => (await token.GetOtpAsync(entryId, at)).Code, ct);
         if (info.SteamId != 0 && s.SteamId != info.SteamId)
             throw new SteamException("Вход выполнен в другой аккаунт Steam, чем привязан к секретам этой записи.");
         var old = store.Load(entryId);
-        Save(s with { DeviceId = old?.DeviceId });
+        Save(s with { DeviceId = old?.DeviceId });     // device_id из maFile: Steam сверяет его с привязкой
     }
 
     private void Save(SteamSession s)
@@ -107,8 +108,11 @@ public sealed class SteamConfirmer(ITokenClient token, uint entryId, ISteamWeb w
             }
             catch (SteamException e) when (e.NeedsLogin && attempt == 0)
             {
+                // сессию — забыть, device_id — оставить
+                var keep = _session ?? store.Load(entryId);
                 _session = null;
-                store.Delete(entryId);
+                if (keep?.DeviceId is { Length: > 0 }) store.Save(entryId, new SteamSession(keep.SteamId, "", DeviceId: keep.DeviceId));
+                else store.Delete(entryId);
             }
         }
     }
@@ -119,16 +123,21 @@ public sealed class SteamConfirmer(ITokenClient token, uint entryId, ISteamWeb w
     public Task RespondAsync(IReadOnlyList<SteamConfirmation> items, bool accept, CancellationToken ct = default) =>
         WithSessionAsync(async s => { await web.RespondAsync(s, Key, items, accept, ct); return true; }, ct);
 
-    /// <summary>Сессия из maFile (SDA): вход не понадобится, пока она жива.</summary>
+    /// <summary>
+    /// Из maFile (SDA): device_id — всегда (Steam сверяет его с привязанным аутентификатором),
+    /// сессия — если есть: тогда вход не понадобится, пока она жива.
+    /// </summary>
     public static void Import(ISteamSessionStore store, uint entryId, SteamMobile m)
     {
-        if (m.RefreshToken is { Length: > 0 } rt && m.SteamId != 0)
-            store.Save(entryId, new SteamSession(m.SteamId, rt, DeviceId: m.DeviceId));
+        if (m.RefreshToken is not { Length: > 0 } && m.DeviceId is not { Length: > 0 }) return;
+        store.Save(entryId, new SteamSession(m.SteamId, m.RefreshToken ?? "", DeviceId: m.DeviceId));
     }
 
     public void Forget()
     {
+        var keep = _session ?? store.Load(entryId);
         _session = null;
-        store.Delete(entryId);
+        if (keep?.DeviceId is { Length: > 0 }) store.Save(entryId, new SteamSession(keep.SteamId, "", DeviceId: keep.DeviceId));
+        else store.Delete(entryId);
     }
 }

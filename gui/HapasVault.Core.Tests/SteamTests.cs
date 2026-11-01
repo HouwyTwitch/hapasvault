@@ -82,9 +82,9 @@ public class SteamParseTests
     {
         using var web = new SteamWeb(new ResetHandler());
         var probe = await web.ProbeAsync();
-        Assert.Equal(["api.steampowered.com", "steamcommunity.com"], probe.Select(p => p.Host));
+        Assert.Equal(["api.steampowered.com", "login.steampowered.com", "steamcommunity.com"], probe.Select(p => p.Host));
         Assert.All(probe, p => Assert.Contains("прокси", p.Error));
-        Assert.Contains("steamcommunity.com", probe[1].Error);
+        Assert.Contains("steamcommunity.com", probe[2].Error);
     }
 
     [Fact]
@@ -113,10 +113,14 @@ public class SteamParseTests
     }
 }
 
-/// <summary>Поддельный Steam: проверяет пароль (RSA), код Steam Guard и ключи подтверждений.</summary>
+/// <summary>
+/// Поддельный Steam по схеме Modern-SDA: QueryTime (часы Steam на 2 мин впереди), вход как браузер,
+/// finalizelogin + transfer_info (Set-Cookie steamLoginSecure), mobileconf с проверкой cookie и ключа.
+/// </summary>
 internal sealed class FakeSteam : HttpMessageHandler
 {
     public const ulong SteamId = 76561197960287930;
+    public static readonly TimeSpan ClockSkew = TimeSpan.FromMinutes(2);
     private readonly RSA _rsa = RSA.Create(2048);
     private readonly byte[] _identity, _shared;
     private readonly string _account, _password;
@@ -129,10 +133,13 @@ internal sealed class FakeSteam : HttpMessageHandler
 
     public List<(string Op, string[] Ids)> Responses { get; } = new();
     public int Logins { get; private set; }
-    public int Refreshes { get; private set; }
+    public int Finalizes { get; private set; }
     public bool ExpireOnce { get; set; }
+    public int ResetsLeft { get; set; }
     public string? LastDevice { get; private set; }
-    public string CurrentAccess => $"AT{_token}";
+    private string _jwt = "";
+
+    private static DateTimeOffset SteamNow => DateTimeOffset.UtcNow + ClockSkew;
 
     private static HttpResponseMessage Proto(ProtoWriter w, int eresult = 1)
     {
@@ -150,75 +157,94 @@ internal sealed class FakeSteam : HttpMessageHandler
     private static async Task<ProtoMessage> Body(HttpRequestMessage req) =>
         ProtoMessage.Parse(Convert.FromBase64String((await Form(req))["input_protobuf_encoded"]!));
 
-    public int ResetsLeft { get; set; }
+    private static string B64Url(string s) => Convert.ToBase64String(Encoding.UTF8.GetBytes(s)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     private bool KeyOk(System.Collections.Specialized.NameValueCollection q, string tag)
     {
         long t = long.Parse(q["t"]!);
         LastDevice = q["p"];
-        return q["tag"] == tag && q["a"] == SteamId.ToString() && q["m"] == "react" &&
+        return q["tag"] == tag && q["a"] == SteamId.ToString() &&
                q["k"] == Convert.ToBase64String(OtpSecret.SteamConfirmationKey(_identity, t, tag)) &&
-               Math.Abs(t - DateTimeOffset.UtcNow.ToUnixTimeSeconds()) < 60;
+               Math.Abs(t - SteamNow.ToUnixTimeSeconds()) < 30;      // время — по часам Steam
     }
 
-    private bool CookieOk(HttpRequestMessage req) =>
-        req.Headers.GetValues("Cookie").Single().Contains("steamLoginSecure=" + Uri.EscapeDataString($"{SteamId}||{CurrentAccess}"));
+    private bool CookieOk(HttpRequestMessage req)
+    {
+        string c = req.Headers.GetValues("Cookie").Single();
+        return _jwt.Length > 0 && c.Contains($"steamLoginSecure={SteamId}||{_jwt}") && c.Contains($"steamMachineAuth{SteamId}=1") &&
+               req.Headers.GetValues("X-Requested-With").Single() == "com.valvesoftware.android.steam.community";
+    }
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
     {
-        string path = req.RequestUri!.AbsolutePath;
+        var uri = req.RequestUri!;
         var p = _rsa.ExportParameters(false);
-        if (req.RequestUri.Host == "api.steampowered.com")
+        if (uri.Host == "api.steampowered.com" && ResetsLeft > 0)
         {
-            Assert.Equal("https://steamcommunity.com/", req.Headers.Referrer?.ToString());
-            if (ResetsLeft > 0)
-            {
-                ResetsLeft--;
-                throw new HttpRequestException(HttpRequestError.ResponseEnded, "The response ended prematurely.");
-            }
+            ResetsLeft--;
+            throw new HttpRequestException(HttpRequestError.ResponseEnded, "The response ended prematurely.");
         }
-        switch (path)
+        switch (uri.Host + uri.AbsolutePath)
         {
-            case "/IAuthenticationService/GetPasswordRSAPublicKey/v1/":
-                // как в aiosteampy: GET с account_name, ответ JSON
-                Assert.Equal(_account, HttpUtility.ParseQueryString(req.RequestUri.Query)["account_name"]);
+            case "api.steampowered.com/ITwoFactorService/QueryTime/v0001":
+                return Json($"{{\"response\":{{\"server_time\":\"{SteamNow.ToUnixTimeSeconds()}\"}}}}");
+            case "api.steampowered.com/IAuthenticationService/GetPasswordRSAPublicKey/v1":
+            {
+                var q = HttpUtility.ParseQueryString(uri.Query);
+                Assert.Equal((_account, "json"), (q["account_name"], q["format"]));
+                Assert.Equal("https://steamcommunity.com/", req.Headers.Referrer?.ToString());
                 string mod = Convert.ToHexString(p.Modulus!), exp = Convert.ToHexString(p.Exponent!);
                 return Json("{\"response\":{\"publickey_mod\":\"" + mod + "\",\"publickey_exp\":\"" + exp + "\",\"timestamp\":\"4242\"}}");
-            case "/IAuthenticationService/BeginAuthSessionViaCredentials/v1/":
+            }
+            case "api.steampowered.com/IAuthenticationService/BeginAuthSessionViaCredentials/v1":
             {
                 var b = await Body(req);
                 string pw = Encoding.UTF8.GetString(_rsa.Decrypt(Convert.FromBase64String(b.String(3)), RSAEncryptionPadding.Pkcs1));
                 if (b.String(2) != _account || pw != _password) return Proto(new ProtoWriter(), eresult: 5);
-                Assert.Equal((4242ul, 3ul, "Mobile"), (b.UInt(4), b.UInt(6), b.String(8)));
+                // как браузер на steamcommunity.com (aiosteampy / Modern-SDA)
+                Assert.Equal((4242ul, "Community", 8ul), (b.UInt(4), b.String(8), b.UInt(11)));
+                Assert.Equal(2ul, b.Messages(9).Single().UInt(2));
                 return Proto(new ProtoWriter().UInt(1, 77).Bytes(2, [1, 2, 3]).Message(4, new ProtoWriter().UInt(1, 3)).UInt(5, SteamId));
             }
-            case "/IAuthenticationService/UpdateAuthSessionWithSteamGuardCode/v1/":
+            case "api.steampowered.com/IAuthenticationService/UpdateAuthSessionWithSteamGuardCode/v1":
             {
-                var f = await Form(req);                 // обычные поля формы
+                var f = await Form(req);
                 var otp = new OtpSecret(OtpKind.Steam, _shared);
-                var now = DateTimeOffset.UtcNow;
-                bool ok = f["code"] == otp.Code(now) || f["code"] == otp.Code(now.AddSeconds(-30));
+                bool ok = f["code"] == otp.Code(SteamNow) || f["code"] == otp.Code(SteamNow.AddSeconds(-30));   // по часам Steam
                 Assert.Equal(("77", SteamId.ToString(), "3"), (f["client_id"], f["steamid"], f["code_type"]));
                 return Proto(new ProtoWriter(), eresult: ok ? 1 : 88);
             }
-            case "/IAuthenticationService/PollAuthSessionStatus/v1/":
+            case "api.steampowered.com/IAuthenticationService/PollAuthSessionStatus/v1":
                 Logins++;
                 _token++;
-                return Proto(new ProtoWriter().String(3, $"RT{_token}").String(4, CurrentAccess));
-            case "/IAuthenticationService/GenerateAccessTokenForApp/v1/":
+                return Proto(new ProtoWriter().String(3, $"RT{_token}").String(4, $"mobile-access-{_token}"));
+            case "login.steampowered.com/jwt/finalizelogin":
             {
-                var b = await Body(req);
-                if (!b.String(1).StartsWith("RT")) return Proto(new ProtoWriter(), eresult: 15);   // AccessDenied
-                Refreshes++;
-                _token++;
-                return Proto(new ProtoWriter().String(1, CurrentAccess).String(2, $"RT{_token}"));
+                var f = await Form(req);
+                if (!(f["nonce"] ?? "").StartsWith("RT") || (f["sessionid"] ?? "").Length != 24) return Json("{\"error\":8}");
+                Finalizes++;
+                return Json("{\"steamID\":\"" + SteamId + "\",\"transfer_info\":[" +
+                            "{\"url\":\"https://steamcommunity.com/login/settoken\",\"params\":{\"nonce\":\"n1\",\"auth\":\"a1\"}}," +
+                            "{\"url\":\"https://store.steampowered.com/login/settoken\",\"params\":{\"nonce\":\"n2\",\"auth\":\"a2\"}}]}");
             }
-            case "/mobileconf/getlist":
+            case "steamcommunity.com/login/settoken":
             {
-                var q = HttpUtility.ParseQueryString(req.RequestUri.Query);
+                var f = await Form(req);
+                Assert.Equal((SteamId.ToString(), "n1"), (f["steamID"], f["nonce"]));
+                _jwt = B64Url("{\"alg\":\"EdDSA\"}") + "." +
+                       B64Url($"{{\"sub\":\"{SteamId}\",\"exp\":{DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds()},\"n\":{Finalizes}}}") + ".sig";
+                var r = new HttpResponseMessage(HttpStatusCode.OK);
+                r.Headers.Add("Set-Cookie", $"steamLoginSecure={SteamId}%7C%7C{_jwt}; Path=/; Secure; HttpOnly; SameSite=None");
+                return r;
+            }
+            case "store.steampowered.com/login/settoken":
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            case "steamcommunity.com/mobileconf/getlist":
+            {
+                var q = HttpUtility.ParseQueryString(uri.Query);
                 if (ExpireOnce) { ExpireOnce = false; return Json("""{"success":false,"needauth":true}"""); }
                 if (!CookieOk(req)) return Json("""{"success":false,"needauth":true}""");
-                if (!KeyOk(q, "list")) return Json("""{"success":false,"message":"Invalid authenticator"}""");
+                if (!KeyOk(q, "conf")) return Json("""{"success":false,"message":"Invalid authenticator"}""");
                 return Json("""
                     {"success":true,"conf":[
                       {"type":2,"type_name":"Обмен","id":"111","creator_id":"9001","nonce":"n111","creation_time":1700000000,
@@ -228,18 +254,13 @@ internal sealed class FakeSteam : HttpMessageHandler
                        "headline":"Mann Co. Key","summary":["Цена: 150 ₽"]}]}
                     """);
             }
-            case "/mobileconf/ajaxop":
+            case "steamcommunity.com/mobileconf/ajaxop":
+            case "steamcommunity.com/mobileconf/multiajaxop":
             {
-                var q = HttpUtility.ParseQueryString(req.RequestUri.Query);
+                Assert.Equal(HttpMethod.Get, req.Method);                     // как Modern-SDA: GET
+                var q = HttpUtility.ParseQueryString(uri.Query);
                 if (!CookieOk(req) || !KeyOk(q, q["op"]!)) return Json("""{"success":false}""");
-                Responses.Add((q["op"]!, [q["cid"]!]));
-                return Json("""{"success":true}""");
-            }
-            case "/mobileconf/multiajaxop":
-            {
-                var q = HttpUtility.ParseQueryString(await req.Content!.ReadAsStringAsync(ct));
-                if (!CookieOk(req) || !KeyOk(q, q["op"]!)) return Json("""{"success":false}""");
-                Responses.Add((q["op"]!, q.GetValues("cid[]")!));
+                Responses.Add((q["op"]!, q.GetValues(uri.AbsolutePath.EndsWith("multiajaxop") ? "cid[]" : "cid")!));
                 return Json("""{"success":true}""");
             }
         }
@@ -295,6 +316,7 @@ public class SteamTokenTests
         Assert.Equal(("Gabe", 2, "Вы отдаёте: AK-47 | Redline"), (list[0].Headline, list[0].Type, list[0].Summary[0]));
         Assert.Equal(SteamWeb.DeviceIdFor(FakeSteam.SteamId), steam.LastDevice);
         Assert.Equal("RT1", store.Items[id].RefreshToken);
+        Assert.Equal(24, store.Items[id].SessionId!.Length);
 
         await confirmer.RespondAsync(list, accept: true);
         await confirmer.RespondAsync([list[1]], accept: false);
@@ -329,9 +351,34 @@ public class SteamTokenTests
         var steam = new FakeSteam("ivan_gamer", "steam-password", secret.Secret, secret.Mobile!.IdentitySecret);
         using var web = new SteamWeb(steam, delay: (_, _) => Task.CompletedTask);
         Assert.Equal(2, (await new SteamConfirmer(c, id, web, store).ListAsync()).Count);
-        Assert.Equal((0, 1), (steam.Logins, steam.Refreshes));          // сессия из maFile обновлена, не новый вход
+        Assert.Equal((0, 1), (steam.Logins, steam.Finalizes));        // сессия из maFile: cookie по refresh token, без входа
+        Assert.Equal("android:mafile-device", steam.LastDevice);      // device_id из maFile, а не вычисленный
+        Assert.Equal("RT0", store.Items[id].RefreshToken);
+    }
+
+    [Fact]
+    public async Task MaFileWithoutSessionKeepsDeviceIdThroughLogin()
+    {
+        using var sim = new Sim();
+        using var c = sim.Client();
+        await c.AttachAsync();
+        await c.PairAsync();
+        await c.BeginSetupAsync();
+        await c.CommitSetupAsync("steam-master");
+        var secret = OtpSecret.Parse(SteamParseTests.MaFile(refresh: null), OtpKind.None);
+        uint id = await c.AddAsync("Игры", "Steam", "ivan_gamer", "steam-password", secret);
+        var store = new MemoryStore();
+        SteamConfirmer.Import(store, id, secret.Mobile!);
+        Assert.False(store.Items[id].IsLoggedIn);                      // только device_id
+
+        var steam = new FakeSteam("ivan_gamer", "steam-password", secret.Secret, secret.Mobile!.IdentitySecret);
+        using var web = new SteamWeb(steam, delay: (_, _) => Task.CompletedTask);
+        var confirmer = new SteamConfirmer(c, id, web, store);
+        Assert.Equal(2, (await confirmer.ListAsync()).Count);
+        Assert.Equal(1, steam.Logins);
         Assert.Equal("android:mafile-device", steam.LastDevice);
-        Assert.Equal("RT1", store.Items[id].RefreshToken);            // новый refresh token сохранён
+        confirmer.Forget();                                            // выход: сессия — нет, device_id — да
+        Assert.Equal(("", "android:mafile-device"), (store.Items[id].RefreshToken, store.Items[id].DeviceId));
     }
 
     [Fact]

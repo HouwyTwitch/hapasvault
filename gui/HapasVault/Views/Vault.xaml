@@ -586,6 +586,18 @@
           </DockPanel>
         </Border>
 
+        <TextBlock Style="{StaticResource Section}" Text="Работа в фоне" />
+        <Border Style="{StaticResource SettingRow}" CornerRadius="28">
+          <DockPanel>
+            <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Switch}" IsChecked="{Binding CloseToTray}" VerticalAlignment="Center" />
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock Style="{StaticResource SettingTitle}" Text="Крестик сворачивает в трей" />
+              <TextBlock Style="{StaticResource SettingHint}" TextWrapping="Wrap"
+                         Text="Радиальное меню и автоблокировка продолжают работать. Выход — правой кнопкой по значку в трее" />
+            </StackPanel>
+          </DockPanel>
+        </Border>
+
         <TextBlock Style="{StaticResource Section}" Text="Steam" />
         <Border Style="{StaticResource SettingRow}" CornerRadius="28">
           <StackPanel>
