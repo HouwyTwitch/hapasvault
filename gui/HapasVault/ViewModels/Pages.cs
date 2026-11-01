@@ -32,13 +32,75 @@ public sealed partial class ConnectViewModel(ShellViewModel shell) : ObservableO
 }
 
 /// <summary>
-/// Первое знакомство ПК и токена: обмен статическими ключами X25519.
-/// Токен запоминает первый ПК и до сброса отказывает остальным.
+/// Знакомство ПК и токена. Чистый токен — обмен ключами X25519 (первый ПК).
+/// Настроенный (уже работает с другим ПК) — привязка по 24 словам: до 4 ПК на токен.
 /// </summary>
-public sealed partial class PairViewModel(ShellViewModel shell) : ObservableObject
+public sealed partial class PairViewModel : ObservableObject
 {
-    [ObservableProperty] private bool _isWorking;
+    private readonly ShellViewModel shell;
+
+    public PairViewModel(ShellViewModel shell)
+    {
+        this.shell = shell;
+        _ = CheckAsync();
+    }
+
+    [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(PairWordsCommand))] private bool _isWorking;
     [ObservableProperty] private string? _error;
+    /// <summary>Токен уже настроен: этот ПК привязывается по 24 словам.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(Title), nameof(Text))] private bool _needsWords;
+    [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(PairWordsCommand))] private string _words = "";
+    [ObservableProperty] private string _tokenInfo = "";
+
+    public string Title => NeedsWords ? "Привязать этот компьютер" : "Сопряжение с токеном";
+    public string Text => NeedsWords
+        ? "Этот токен уже работает с другим компьютером. Введите 24 слова восстановления — токен узнает, что вы владелец, и запомнит этот ПК (до 4 компьютеров). Данные остаются на токене."
+        : "Компьютер и токен обменяются ключами. Остальные компьютеры потом привязываются по 24 словам — до 4 на один токен.";
+
+    /// <summary>Что вставлено: чистый или настроенный токен (опрос оболочки зовёт это раз в 2 с).</summary>
+    public async Task CheckAsync()
+    {
+        if (IsWorking) return;
+        try
+        {
+            var who = await shell.Token.WhoAsync();
+            NeedsWords = who.SetupDone;
+            TokenInfo = who.SetupDone
+                ? $"Токен {who.Id[..4]}…{who.Id[^4..]} · привязано компьютеров: {who.PcCount} из 4"
+                : $"Новый токен {who.Id[..4]}…{who.Id[^4..]}";
+        }
+        catch (TokenException)
+        {
+        }
+    }
+
+    private bool CanPairWords() => Bip39.Check(Words) == PhraseCheck.Ok && !IsWorking;
+
+    [RelayCommand(CanExecute = nameof(CanPairWords))]
+    private async Task PairWords()
+    {
+        Error = null;
+        IsWorking = true;
+        try
+        {
+            await shell.Token.PairWithWordsAsync(Words);
+            Words = "";
+            shell.Snackbar.Show("Компьютер привязан. Откройте хранилище своим мастер-паролем");
+            await shell.RefreshAsync();
+        }
+        catch (TokenException e) when (e.Error is TokenError.WrongPhrase or TokenError.PairFull or TokenError.TooManyTokens or TokenError.BadPhrase)
+        {
+            Error = e.Message;
+        }
+        catch (TokenException e)
+        {
+            await shell.HandleErrorAsync(e);
+        }
+        finally
+        {
+            IsWorking = false;
+        }
+    }
 
     [RelayCommand]
     private async Task Pair()
@@ -51,9 +113,10 @@ public sealed partial class PairViewModel(ShellViewModel shell) : ObservableObje
             shell.Snackbar.Show("Токен сопряжён с этим компьютером");
             await shell.RefreshAsync();
         }
-        catch (TokenException e) when (e.Error is TokenError.AlreadyPaired)
+        catch (TokenException e) when (e.Error is TokenError.AlreadyPaired or TokenError.NeedWords or TokenError.TooManyTokens)
         {
             Error = e.Message;
+            await CheckAsync();
         }
         catch (TokenException e)
         {

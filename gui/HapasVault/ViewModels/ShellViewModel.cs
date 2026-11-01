@@ -154,6 +154,7 @@ public sealed partial class ShellViewModel : ObservableObject
             }
             var info = await Token.GetInfoAsync();
             Info = info;
+            await LabelThisPcAsync();
             if (!info.SetupDone)
             {
                 if (Page is not SetupViewModel and not RestoreViewModel) Show(() => new WelcomeViewModel(this));
@@ -172,6 +173,21 @@ public sealed partial class ShellViewModel : ObservableObject
         catch (TokenException e)
         {
             await HandleErrorAsync(e);
+        }
+    }
+
+    private readonly HashSet<string> _labeled = new();
+
+    /// <summary>Имя этого ПК — токену (видно в списке компьютеров на других ПК). Раз за запуск на токен.</summary>
+    private async Task LabelThisPcAsync()
+    {
+        if (IsDemo || Token.KnownTokens.FirstOrDefault(t => t.Active) is not { } t || !_labeled.Add(t.Id)) return;
+        try
+        {
+            await Token.SetPcLabelAsync(Environment.MachineName);
+        }
+        catch (TokenException)
+        {
         }
     }
 
@@ -290,7 +306,12 @@ public sealed partial class ShellViewModel : ObservableObject
                 case null:
                     await RefreshAsync();
                     break;
-                case LockViewModel or PairViewModel or WelcomeViewModel:
+                case PairViewModel pair:
+                    // у незнакомого токена нет сессии: только «кто ты» — заодно видно, что вставили другой
+                    if (!Token.IsAttached) await RefreshAsync();
+                    else await pair.CheckAsync();
+                    break;
+                case LockViewModel or WelcomeViewModel:
                     if (!Token.IsAttached) await RefreshAsync();
                     else Info = await Token.GetInfoAsync();
                     if (Page is LockViewModel && Info is { Unlocked: true }) await RefreshAsync();

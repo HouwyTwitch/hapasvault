@@ -31,6 +31,15 @@ internal static unsafe partial class Native
     [LibraryImport(Lib)] internal static partial void pmapi_set_argon(nint h, uint kib, uint passes);
 
     [LibraryImport(Lib)] internal static partial int pmapi_attach(nint h, ushort port);
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)] internal static partial int pmapi_pair_words(nint h, string words);
+    [LibraryImport(Lib)] internal static partial int pmapi_who(nint h, byte* id, out int setup, out int pcs);
+    [LibraryImport(Lib)] internal static partial int pmapi_token_count(nint h);
+    [LibraryImport(Lib)] internal static partial int pmapi_token_get(nint h, int index, byte* id, byte* label, nuint cap, out int active);
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)] internal static partial int pmapi_token_rename(nint h, int index, string label);
+    [LibraryImport(Lib)] internal static partial int pmapi_token_forget(nint h, int index);
+    [LibraryImport(Lib)] internal static partial int pmapi_pc_list(nint h, delegate* unmanaged<nint, int, int, byte*, byte*, void> cb, nint ctx);
+    [LibraryImport(Lib)] internal static partial int pmapi_pc_remove(nint h, int slot);
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)] internal static partial int pmapi_pc_label(nint h, string label);
     [LibraryImport(Lib)] internal static partial int pmapi_attach_usb(nint h);
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)] internal static partial int pmapi_attach_serial(nint h, string path);
     [LibraryImport(Lib)] internal static partial int pmapi_find_usb(byte* path, nuint cap);

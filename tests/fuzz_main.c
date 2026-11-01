@@ -47,7 +47,7 @@ static size_t seed_request(uint8_t *b, size_t cap)
                                     10, 's','h','a','r','e','d','-','1','2','3',
                                     10, 'i','d','e','n','t','i','t','y','-','1',
                                     1, 0, 0, 0, 0, 0, 0, 0, 3, 'R','1','2'};
-    switch (rnd() % 14) {
+    switch (rnd() % 17) {
     case 0: wire_put_u8(&w, CMD_INFO); break;
     case 1: wire_put_u8(&w, CMD_LIST); wire_put_u32(&w, rnd() % 4); break;
     case 2: wire_put_u8(&w, CMD_GET); wire_put_u32(&w, rnd() % 8); break;
@@ -86,6 +86,9 @@ static size_t seed_request(uint8_t *b, size_t cap)
         for (int i = 0; i < 64; i++) wire_put_u8(&w, (uint8_t)rnd());
         break;
     }
+    case 13: wire_put_u8(&w, CMD_PC_LIST); break;
+    case 14: wire_put_u8(&w, CMD_PC_REMOVE); wire_put_u8(&w, (uint8_t)(1 + rnd() % 5)); break;   /* не себя (0) */
+    case 15: wire_put_u8(&w, CMD_PC_LABEL); wire_put_str(&w, "fuzz-pc"); break;
     default: wire_put_u8(&w, (uint8_t)rnd()); break;
     }
     return w.n;
@@ -133,7 +136,7 @@ int main(int argc, char **argv)
             /* мусор на внешнем уровне: любые типы кадров и длины */
             size_t n = rnd() % 300;
             for (size_t k = 0; k < n; k++) frame[k] = (uint8_t)rnd();
-            if (n && rnd() % 2) frame[0] = (uint8_t)(1 + rnd() % 3);
+            if (n && rnd() % 2) frame[0] = (uint8_t)(1 + rnd() % 5);   /* PAIR, HELLO, DATA, WHO, PAIR_PROOF */
             token_handle(frame, n, resp, sizeof resp);
             outer++;
         } else {
@@ -149,7 +152,12 @@ int main(int argc, char **argv)
         }
         /* держим сессию и хранилище открытыми, иначе мутанты упрутся в ST_LOCKED */
         if (!c.sess.active || i % 500 == 0) {
-            if (pmc_connect(&c) != 0) { pmc_pair(&c); pmc_connect(&c); }
+            if (pmc_connect(&c) != 0) {
+                /* мутант мог отвязать этот ПК: привязываемся снова по словам */
+                hal_sim_advance_ms(1100);
+                pmc_pair_words(&c, words);
+                pmc_connect(&c);
+            }
             pmc_unlock(&c, "fuzz-password");
         }
         if (i % 4000 == 0) hal_sim_advance_ms(61000);   /* сбросить лимиты частоты */

@@ -54,8 +54,21 @@ internal static class Screenshots
 
         await Shot("02-pair", () => shell.EnterDemoAsync(new DemoTokenClient(setup: false, paired: false)));
 
+        // настроенный токен на новом ПК: привязка по 24 словам
+        await Shot("02b-pair-words", async () =>
+        {
+            await shell.EnterDemoAsync(new DemoTokenClient(setup: true, paired: false));
+            await Settle();
+            if (shell.Page is PairViewModel pv) await pv.CheckAsync();
+            await Settle();
+            if (shell.Page is not PairViewModel { NeedsWords: true })
+                throw new InvalidOperationException("настроенный токен должен предлагать привязку по словам");
+        });
+
         await Shot("03-welcome", async () =>
         {
+            await shell.EnterDemoAsync(new DemoTokenClient(setup: false, paired: false));
+            await Settle();
             var pair = (PairViewModel)shell.Page!;
             await pair.PairCommand.ExecuteAsync(null);
         });
@@ -163,6 +176,24 @@ internal static class Screenshots
 
         await Shot("14-settings", () => { vaultShell!.Section = Section.Settings; return Task.CompletedTask; });
 
+        // привязки: компьютеры токена и токены этого ПК, мастер дублирования
+        await Shot("14c-settings-bindings", async () =>
+        {
+            await Settle();
+            var settings = (SettingsViewModel)vaultShell!.Current!;
+            if (settings.Pcs.Count != 2 || settings.Tokens.Count != 2)
+                throw new InvalidOperationException($"привязки: {settings.Pcs.Count} ПК, {settings.Tokens.Count} токенов");
+            ScrollTo(window, "Дублировать на новый токен");
+        });
+
+        await Shot("14d-duplicate", () =>
+        {
+            var settings = (SettingsViewModel)vaultShell!.Current!;
+            _ = settings.DuplicateCommand.ExecuteAsync(null);
+            if (shell.Dialog is not DuplicateDialogViewModel) throw new InvalidOperationException("мастер дублирования не открылся");
+            return Task.CompletedTask;
+        });
+
         // память токена: показатель есть и посчитан
         await Shot("14b-settings-storage", async () =>
         {
@@ -170,13 +201,9 @@ internal static class Screenshots
             var settings = (SettingsViewModel)vaultShell!.Current!;
             if (!settings.StorageKnown || settings.StorageValue <= 0 || !settings.StorageHint.Contains("поместится"))
                 throw new InvalidOperationException("память токена не показана: " + settings.StorageText);
-            if (FindText(window, "Память токена") is { } t)
-            {
-                DependencyObject? p = t;
-                while (p != null && p is not ScrollViewer) p = VisualTreeHelper.GetParent(p);
-                if (p is ScrollViewer sv)
-                    sv.ScrollToVerticalOffset(sv.VerticalOffset + t.TranslatePoint(new Point(0, 0), sv).Y - 120);
-            }
+            shell.Dialog?.Close(false);
+            await Settle();
+            ScrollTo(window, "Память токена");
         });
 
         var iconBefore = window.Icon;
@@ -290,6 +317,15 @@ internal static class Screenshots
     }
 
     // дать отыграть анимациям и привязкам
+    private static void ScrollTo(Window window, string text)
+    {
+        if (FindText(window, text) is not { } t) return;
+        DependencyObject? p = t;
+        while (p != null && p is not ScrollViewer) p = VisualTreeHelper.GetParent(p);
+        if (p is ScrollViewer sv)
+            sv.ScrollToVerticalOffset(sv.VerticalOffset + t.TranslatePoint(new Point(0, 0), sv).Y - 120);
+    }
+
     private static TextBlock? FindText(DependencyObject root, string text)
     {
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)

@@ -255,4 +255,55 @@
       </ScrollViewer>
     </DockPanel>
   </DataTemplate>
+
+  <!-- ===================== дублирование токена ===================== -->
+  <DataTemplate DataType="{x:Type vm:DuplicateDialogViewModel}">
+    <StackPanel Width="520">
+      <DockPanel>
+        <c:MorphShape DockPanel.Dock="Left" Width="48" Height="48" Shape="Cookie9" TargetShape="Sunny" HoverMorph="True" Margin="0,0,16,0"
+                      Fill="{DynamicResource SecondaryContainer}" TextElement.Foreground="{DynamicResource OnSecondaryContainer}"
+                      IsMorphed="{Binding IsBusy}" Spin="6">
+          <c:Icon Data="{StaticResource Icon.Usb}" Width="24" Height="24" />
+        </c:MorphShape>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Style="{StaticResource Headline.Small}" Text="Дублировать на новый токен" />
+          <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource OnSurfaceVariant}"
+                     Text="Записи, коды 2FA и секреты Steam — на чистую плату" />
+        </StackPanel>
+      </DockPanel>
+
+      <StackPanel Margin="0,20,0,0" Visibility="{Binding IsIntro, Converter={StaticResource VisibleWhen}}">
+        <TextBlock Style="{StaticResource Body.Medium}" TextWrapping="Wrap" Foreground="{DynamicResource OnSurfaceVariant}"
+                   Text="Копия читается в память (на диск не пишется), затем вы вставляете чистый токен — программа привяжет его и запишет копию. Ключ токена выводится из 24 слов, поэтому они нужны." />
+        <TextBox Style="{StaticResource TextField}" Margin="0,16,0,0" Height="96" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                 c:A.Label="24 слова восстановления" c:A.Icon="{StaticResource Icon.Key}" c:A.FocusOnLoad="True"
+                 Text="{Binding Words, UpdateSourceTrigger=PropertyChanged}" />
+        <c:PasswordField Margin="0,12,0,0" Label="Мастер-пароль" Password="{Binding Password}" />
+      </StackPanel>
+
+      <DockPanel Margin="0,20,0,0" Visibility="{Binding Status, Converter={StaticResource VisibleWhen}}">
+        <c:LoadingIndicator DockPanel.Dock="Left" Width="36" Height="36" Margin="0,0,12,0" Foreground="{DynamicResource Primary}"
+                            Visibility="{Binding IsSwap, Converter={StaticResource VisibleWhen}}" />
+        <c:Icon DockPanel.Dock="Left" Data="{StaticResource Icon.CheckCircle}" Width="28" Height="28" Margin="0,0,12,0"
+                Foreground="{DynamicResource Primary}" Visibility="{Binding IsDone, Converter={StaticResource VisibleWhen}}" />
+        <TextBlock Style="{StaticResource Body.Large}" TextWrapping="Wrap" VerticalAlignment="Center" Text="{Binding Status}" />
+      </DockPanel>
+      <c:WavyProgress Margin="0,12,0,0" IsIndeterminate="True" Foreground="{DynamicResource Primary}" Track="{DynamicResource SecondaryContainer}"
+                      Visibility="{Binding IsBusy, Converter={StaticResource VisibleWhen}}" />
+
+      <Border CornerRadius="16" Padding="16,12" Margin="0,16,0,0" Background="{DynamicResource ErrorContainer}"
+              Visibility="{Binding Error, Converter={StaticResource VisibleWhen}}">
+        <TextBlock Style="{StaticResource Body.Medium}" TextWrapping="Wrap" Foreground="{DynamicResource OnErrorContainer}" Text="{Binding Error}" />
+      </Border>
+
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,24,0,0">
+        <Button Style="{StaticResource Button.Text}" Content="Отмена" Command="{Binding FinishCommand}"
+                Visibility="{Binding IsDone, Converter={StaticResource VisibleWhen}, ConverterParameter=invert}" />
+        <Button Style="{StaticResource Button.Filled}" Margin="8,0,0,0" Content="Продолжить" c:A.Icon="{StaticResource Icon.ArrowForward}"
+                Command="{Binding StartCommand}" IsDefault="True" Visibility="{Binding IsIntro, Converter={StaticResource VisibleWhen}}" />
+        <Button Style="{StaticResource Button.Filled}" Margin="8,0,0,0" Content="Готово" c:A.Icon="{StaticResource Icon.Check}"
+                Command="{Binding FinishCommand}" Visibility="{Binding IsDone, Converter={StaticResource VisibleWhen}}" />
+      </StackPanel>
+    </StackPanel>
+  </DataTemplate>
 </ResourceDictionary>

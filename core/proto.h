@@ -25,14 +25,21 @@
 #ifndef PM_PROTO_H
 #define PM_PROTO_H
 
-#define PM_PROTO_VERSION   4   /* 4: ёмкость по RAM/flash, LIST страницами, бэкап частями;
+#define PM_PROTO_VERSION   5   /* 5: до 4 ПК на токен (привязка по 24 словам), WHO, HELLO с ключом ПК;
+                                   4: ёмкость по RAM/flash, LIST страницами, бэкап частями;
                                    3: подтверждения Steam; 2: OTP, UPDATE, тип OTP в LIST */
 
-/* Типы кадров */
-#define FR_PAIR    0x01
-#define FR_HELLO   0x02
-#define FR_DATA    0x03
-#define FR_ERROR   0x7F
+/* Типы кадров (открытые, до сессии):
+ *   FR_WHO         -> [FR_WHO][token_pub 32][u8 флаги: 1 — настроен][u8 сколько ПК привязано]
+ *   FR_PAIR        [pc_pub 32] -> [token_pub 32]   первый ПК чистого (не настроенного) токена
+ *   FR_PAIR_PROOF  [pc_pub 32][proof 32] -> [token_pub 32]   ещё один ПК, proof — kdf.h pm_pair_proof
+ *   FR_HELLO       [pc_pub 32][epk 32] -> [epk 32]   сессия Noise KK с привязанным ПК */
+#define FR_PAIR       0x01
+#define FR_HELLO      0x02
+#define FR_DATA       0x03
+#define FR_WHO        0x04
+#define FR_PAIR_PROOF 0x05
+#define FR_ERROR      0x7F
 
 /* Ошибки внешнего уровня (FR_ERROR) */
 #define FE_BAD_FRAME      1
@@ -40,6 +47,9 @@
 #define FE_NOT_PAIRED     3
 #define FE_NO_SESSION     4
 #define FE_DECRYPT        5   /* сессия сброшена */
+#define FE_NEED_PROOF     6   /* токен настроен: новый ПК — только по 24 словам */
+#define FE_PAIR_FULL      7   /* уже привязано 4 ПК */
+#define FE_BAD_PROOF      8   /* подпись привязки не сошлась: не та фраза */
 
 /* Команды (внутри FR_DATA) */
 #define CMD_INFO          0x10  /* -> [u8 flags][u8 proto][u16 count][u32 uptime_s][u32 used][u32 capacity]
@@ -58,6 +68,9 @@
 #define CMD_OTP           0x45  /* [u32 id][u64 unix_time] -> [u8 type][u8 period][str code] */
 #define CMD_STEAM_CONF    0x46  /* [u32 id][u64 unix_time][u8 n][tag n] -> [key 20] (HMAC identity_secret) */
 #define CMD_STEAM_INFO    0x47  /* [u32 id][u8 flags] -> [u64 steamid][u8 n][revocation n, если flags&1] */
+#define CMD_PC_LIST       0x52  /* (открытое) -> [u8 n] n * {u8 slot, u8 это_вы, pub 8 (отпечаток), str имя} */
+#define CMD_PC_REMOVE     0x53  /* (открытое) [u8 slot] -> ok; отвязанный ПК больше не установит сессию */
+#define CMD_PC_LABEL      0x54  /* [str имя] -> ok; имя текущего ПК (видно в списке на других ПК) */
 #define CMD_LOG           0x50  /* -> [u8 n] n * {u32 uptime_s, u8 cmd, u8 status, u32 id} */
 #define CMD_BACKUP        0x51  /* [u32 off] -> [u32 total][часть зашифрованного блоба хранилища] */
 #define CMD_FACTORY_RESET 0x60  /* (только открытое) -> ok, стирает всё, включая сопряжение */

@@ -14,6 +14,8 @@
 
 static pm_config  g_cfg;
 static pm_session g_sess;
+static int        g_sess_pc = -1;   /* какой ПК (pcs[]) в текущей сессии */
+static uint64_t   g_proof_after;    /* после неверной подписи привязки — пауза */
 
 static int      g_unlocked;
 static uint8_t  g_kvault[32];
@@ -73,6 +75,7 @@ static void drop_session(void)
 {
     lock_vault();
     pm_session_clear(&g_sess);
+    g_sess_pc = -1;
     hal_led(LED_IDLE);
 }
 
@@ -643,6 +646,48 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
         break;
     }
 
+    case CMD_PC_LIST: {
+        if (!g_unlocked) { st = ST_LOCKED; break; }
+        wire_put_u8(&w, g_cfg.pc_count);
+        for (int i = 0; i < g_cfg.pc_count; i++) {
+            wire_put_u8(&w, (uint8_t)i);
+            wire_put_u8(&w, i == g_sess_pc);
+            wire_put_bytes(&w, g_cfg.pcs[i].pub, 8);
+            wire_put_str(&w, g_cfg.pcs[i].label);
+        }
+        break;
+    }
+
+    case CMD_PC_REMOVE: {
+        uint8_t slot = wire_u8(&r);
+        if (r.err || r.n) { st = ST_BAD_ARGS; break; }
+        if (!g_unlocked) { st = ST_LOCKED; break; }
+        if (slot >= g_cfg.pc_count) { st = ST_NOT_FOUND; break; }
+        pm_config before = g_cfg;
+        for (int i = slot; i + 1 < g_cfg.pc_count; i++) g_cfg.pcs[i] = g_cfg.pcs[i + 1];
+        g_cfg.pc_count--;
+        crypto_wipe(&g_cfg.pcs[g_cfg.pc_count], sizeof g_cfg.pcs[0]);
+        if (store_config_save(&g_cfg) != 0) { g_cfg = before; st = ST_FLASH; }
+        else if (g_sess_pc == slot) g_sess_pc = -2;      /* себя: ответ уйдёт, потом сессия закроется */
+        else if (g_sess_pc > slot) g_sess_pc--;
+        crypto_wipe(&before, sizeof before);
+        do_log = 1;
+        break;
+    }
+
+    case CMD_PC_LABEL: {
+        size_t l = wire_u8(&r);
+        const uint8_t *name = wire_bytes(&r, l);
+        if (r.err || r.n || l >= STORE_PC_LABEL) { st = ST_BAD_ARGS; break; }
+        if (g_sess_pc < 0) { st = ST_NOT_FOUND; break; }
+        char *dst = g_cfg.pcs[g_sess_pc].label;
+        if (strlen(dst) == l && memcmp(dst, name, l) == 0) break;   /* без лишней записи во flash */
+        memset(dst, 0, STORE_PC_LABEL);
+        memcpy(dst, name, l);
+        if (store_config_save(&g_cfg) != 0) st = ST_FLASH;
+        break;
+    }
+
     case CMD_FACTORY_RESET:
         if (!g_unlocked) { st = ST_LOCKED; break; }
         store_wipe();
@@ -674,13 +719,24 @@ size_t token_handle(const uint8_t *in, size_t len, uint8_t *out, size_t cap)
     g_last_activity = hal_millis();
 
     switch (in[0]) {
+    case FR_WHO:
+        if (len != 1) return frame_err(out, FE_BAD_FRAME);
+        out[0] = FR_WHO;
+        token_public_key(out + 1);
+        out[33] = (g_cfg.flags & CFG_SETUP) ? 1 : 0;
+        out[34] = g_cfg.pc_count;
+        return 35;
+
     case FR_PAIR: {
+        /* первый ПК — только у чистого токена: настроенный принимает новые ПК по 24 словам */
         if (len != 33) return frame_err(out, FE_BAD_FRAME);
-        if (g_cfg.flags & CFG_PAIRED) return frame_err(out, FE_ALREADY_PAIRED);
-        memcpy(g_cfg.pc_pub, in + 1, 32);
-        g_cfg.flags |= CFG_PAIRED;
+        if (g_cfg.pc_count) return frame_err(out, FE_ALREADY_PAIRED);
+        if (g_cfg.flags & CFG_SETUP) return frame_err(out, FE_NEED_PROOF);
+        memset(&g_cfg.pcs[0], 0, sizeof g_cfg.pcs[0]);
+        memcpy(g_cfg.pcs[0].pub, in + 1, 32);
+        g_cfg.pc_count = 1;
         if (store_config_save(&g_cfg) != 0) {
-            g_cfg.flags &= (uint8_t)~CFG_PAIRED;
+            g_cfg.pc_count = 0;
             return frame_err(out, FE_BAD_FRAME);
         }
         out[0] = FR_PAIR;
@@ -688,18 +744,54 @@ size_t token_handle(const uint8_t *in, size_t len, uint8_t *out, size_t cap)
         return 33;
     }
 
+    case FR_PAIR_PROOF: {
+        if (len != 65) return frame_err(out, FE_BAD_FRAME);
+        if (!(g_cfg.flags & CFG_SETUP)) return frame_err(out, FE_NOT_PAIRED);
+        if (hal_millis() < g_proof_after) return frame_err(out, FE_BAD_PROOF);
+        uint8_t spk[32], want[32];
+        token_public_key(spk);
+        pm_pair_proof(want, g_cfg.k_token, in + 1, spk);
+        int ok = crypto_verify32(want, in + 33) == 0;
+        crypto_wipe(want, sizeof want);
+        if (!ok) {
+            g_proof_after = hal_millis() + 1000;          /* подпись 256 бит, но перебор всё равно гасим */
+            return frame_err(out, FE_BAD_PROOF);
+        }
+        int found = -1;
+        for (int i = 0; i < g_cfg.pc_count; i++)
+            if (crypto_verify32(g_cfg.pcs[i].pub, in + 1) == 0) found = i;
+        if (found < 0) {
+            if (g_cfg.pc_count >= STORE_MAX_PCS) return frame_err(out, FE_PAIR_FULL);
+            pm_pc *p = &g_cfg.pcs[g_cfg.pc_count];
+            memset(p, 0, sizeof *p);
+            memcpy(p->pub, in + 1, 32);
+            g_cfg.pc_count++;
+            if (store_config_save(&g_cfg) != 0) {
+                g_cfg.pc_count--;
+                return frame_err(out, FE_BAD_FRAME);
+            }
+        }
+        out[0] = FR_PAIR_PROOF;
+        memcpy(out + 1, spk, 32);
+        return 33;
+    }
+
     case FR_HELLO: {
-        if (len != 33) return frame_err(out, FE_BAD_FRAME);
-        if (!(g_cfg.flags & CFG_PAIRED)) return frame_err(out, FE_NOT_PAIRED);
+        if (len != 65) return frame_err(out, FE_BAD_FRAME);
+        int pc = -1;
+        for (int i = 0; i < g_cfg.pc_count; i++)
+            if (crypto_verify32(g_cfg.pcs[i].pub, in + 1) == 0) pc = i;
+        if (pc < 0) return frame_err(out, FE_NOT_PAIRED);     /* не привязан или отвязан */
         drop_session();              /* новая сессия = заново unlock */
         uint8_t esk[32], epk[32], spk[32];
         hal_rng(esk, 32);
         crypto_x25519_public_key(epk, esk);
         token_public_key(spk);
         int r = pm_session_establish(&g_sess, PM_RESPONDER, g_cfg.token_sk, spk, esk, epk,
-                                     g_cfg.pc_pub, in + 1);
+                                     g_cfg.pcs[pc].pub, in + 33);
         crypto_wipe(esk, 32);
         if (r != 0) return frame_err(out, FE_BAD_FRAME);
+        g_sess_pc = pc;
         hal_led(LED_SESSION);
         out[0] = FR_HELLO;
         memcpy(out + 1, epk, 32);
@@ -722,8 +814,8 @@ size_t token_handle(const uint8_t *in, size_t len, uint8_t *out, size_t cap)
         out[0] = FR_DATA;
         size_t n = 1 + pm_session_seal(&g_sess, out + 1, g_resp, rl);
         crypto_wipe(g_resp, rl);
-        /* после сброса сессия недействительна: ответ уже зашифрован старым ключом */
-        if (was_reset && !(g_cfg.flags & CFG_PAIRED)) pm_session_clear(&g_sess);
+        /* после сброса или отвязки себя сессия недействительна: ответ уже зашифрован */
+        if ((was_reset && g_cfg.pc_count == 0) || g_sess_pc == -2) { pm_session_clear(&g_sess); g_sess_pc = -1; }
         return n;
     }
 

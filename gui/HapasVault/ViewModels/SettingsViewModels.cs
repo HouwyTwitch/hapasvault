@@ -67,6 +67,28 @@ public sealed partial class Swatch(string name, Color? seed) : ObservableObject
     [ObservableProperty] private bool _isSelected;
 }
 
+public sealed partial class PcItem(PairedPc pc, SettingsViewModel owner) : ObservableObject
+{
+    public PairedPc Pc => pc;
+    public string Title => pc.Label.Length > 0 ? pc.Label : "Компьютер без имени";
+    public string Subtitle => (pc.IsMe ? "этот компьютер · " : "") + $"ключ {pc.Id[..4]}…{pc.Id[^4..]}";
+    public bool IsMe => pc.IsMe;
+
+    [RelayCommand]
+    private Task Remove() => owner.RemovePcAsync(this);
+}
+
+public sealed partial class TokenItem(KnownToken t, SettingsViewModel owner) : ObservableObject
+{
+    public KnownToken Token => t;
+    public string Title => t.Label;
+    public string Subtitle => (t.Active ? "подключён сейчас · " : "") + $"ключ {t.Id[..4]}…{t.Id[^4..]}";
+    public bool Active => t.Active;
+
+    [RelayCommand]
+    private Task Forget() => owner.ForgetTokenAsync(this);
+}
+
 /// <summary>Настройки: оформление, безопасность, токен.</summary>
 public sealed partial class SettingsViewModel : ObservableObject
 {
@@ -105,6 +127,71 @@ public sealed partial class SettingsViewModel : ObservableObject
     }
 
     public ShellViewModel Shell => _shell;
+
+    // ---- привязки: до 4 ПК на токен, до 4 токенов на ПК ----
+    public ObservableCollection<PcItem> Pcs { get; } = new();
+    public ObservableCollection<TokenItem> Tokens { get; } = new();
+    [ObservableProperty] private string _pcsTitle = "Компьютеры этого токена";
+    [ObservableProperty] private string _tokensTitle = "Токены этого компьютера";
+
+    private async Task LoadBindingsAsync()
+    {
+        Tokens.Clear();
+        foreach (var t in _shell.Token.KnownTokens) Tokens.Add(new TokenItem(t, this));
+        TokensTitle = $"Токены этого компьютера · {Tokens.Count} из 4";
+        var pcs = await _shell.RunAsync(() => _shell.Token.GetPcsAsync());
+        Pcs.Clear();
+        foreach (var p in pcs ?? []) Pcs.Add(new PcItem(p, this));
+        PcsTitle = $"Компьютеры этого токена · {Pcs.Count} из 4";
+    }
+
+    public async Task RemovePcAsync(PcItem item)
+    {
+        bool ok = await _shell.ShowDialogAsync(new ConfirmDialogViewModel
+        {
+            Title = item.IsMe ? "Отвязать этот компьютер?" : $"Отвязать «{item.Title}»?",
+            Message = item.IsMe
+                ? "Токен забудет этот компьютер, хранилище закроется. Вернуть — по 24 словам на экране привязки."
+                : "Токен перестанет работать с тем компьютером, даже если ключ ПК украден. Вернуть — по 24 словам на том ПК.",
+            ConfirmText = "Отвязать",
+            IsDanger = true,
+            IconKey = "Icon.Devices",
+        });
+        if (!ok || !await _shell.RunAsync(() => _shell.Token.RemovePcAsync(item.Pc.Slot))) return;
+        if (item.IsMe)
+        {
+            await _shell.Token.ForgetPairingAsync();
+            _shell.Page = null;
+            await _shell.RefreshAsync();
+            return;
+        }
+        _shell.Snackbar.Show($"«{item.Title}» отвязан");
+        await LoadBindingsAsync();
+    }
+
+    public async Task ForgetTokenAsync(TokenItem item)
+    {
+        bool ok = await _shell.ShowDialogAsync(new ConfirmDialogViewModel
+        {
+            Title = $"Забыть «{item.Title}»?",
+            Message = "Этот компьютер удалит ключ к токену. Сам токен и записи на нём не меняются; " +
+                      "чтобы и токен забыл этот ПК, отвяжите его в списке компьютеров. Вернуть — по 24 словам.",
+            ConfirmText = "Забыть",
+            IsDanger = true,
+            IconKey = "Icon.Usb",
+        });
+        if (!ok || !await _shell.RunAsync(() => _shell.Token.ForgetTokenAsync(item.Token.Index))) return;
+        if (item.Active)
+        {
+            _shell.Page = null;
+            await _shell.RefreshAsync();
+            return;
+        }
+        await LoadBindingsAsync();
+    }
+
+    [RelayCommand]
+    private Task Duplicate() => _shell.ShowDialogAsync(new DuplicateDialogViewModel(_shell));
     public ObservableCollection<Swatch> Swatches { get; } = new();
     public bool IsDemo => _shell.IsDemo;
     public string Version => Services.UpdateChecker.DisplayVersion;
@@ -165,8 +252,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     public async Task LoadAsync()
     {
         var info = await _shell.RunAsync(() => _shell.Token.GetInfoAsync());
+        await LoadBindingsAsync();
         if (info != null)
-            TokenText = (_shell.Token.Transport == TokenTransport.Usb ? "USB" : _shell.IsDemo ? "Демо" : "Симулятор") +
+            TokenText = (Tokens.FirstOrDefault(t => t.Active) is { } cur ? $"«{cur.Title}» · " : "") +
+                        (_shell.Token.Transport == TokenTransport.Usb ? "USB" : _shell.IsDemo ? "Демо" : "Симулятор") +
                         $" · протокол v{info.Protocol} · {Ru.Plural(info.Count, "запись", "записи", "записей")} · " +
                         $"работает {Ru.Duration(info.UptimeSeconds)}";
         if (info == null) return;

@@ -120,9 +120,15 @@
             <c:Icon Data="{StaticResource Icon.Usb}" Width="52" Height="52" Foreground="{DynamicResource OnPrimaryContainer}" />
           </c:MorphShape>
         </StackPanel>
-        <TextBlock Style="{StaticResource Headline.Emphasized}" TextAlignment="Center" Margin="0,40,0,10" Text="Сопряжение с токеном" />
-        <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}"
-                   Text="Компьютер и токен обменяются ключами. Токен запомнит этот компьютер и не станет работать с другими, пока его не сбросят." />
+        <TextBlock Style="{StaticResource Headline.Emphasized}" TextAlignment="Center" Margin="0,40,0,10" Text="{Binding Title}" />
+        <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" TextWrapping="Wrap" Foreground="{DynamicResource OnSurfaceVariant}"
+                   Text="{Binding Text}" />
+        <TextBlock Style="{StaticResource Label.Large}" TextAlignment="Center" Margin="0,12,0,0" Foreground="{DynamicResource Primary}"
+                   Text="{Binding TokenInfo}" Visibility="{Binding TokenInfo, Converter={StaticResource VisibleWhen}}" />
+        <TextBox Style="{StaticResource TextField}" Margin="0,24,0,0" Height="120" TextWrapping="Wrap" AcceptsReturn="False" VerticalContentAlignment="Top"
+                 c:A.Label="24 слова через пробел" c:A.Icon="{StaticResource Icon.Key}" c:A.FocusOnLoad="True"
+                 Text="{Binding Words, UpdateSourceTrigger=PropertyChanged}"
+                 Visibility="{Binding NeedsWords, Converter={StaticResource VisibleWhen}}" />
         <Border CornerRadius="20" Padding="18,14" Background="{DynamicResource ErrorContainer}" Margin="0,20,0,0"
                 Visibility="{Binding Error, Converter={StaticResource VisibleWhen}}">
           <DockPanel>
@@ -131,7 +137,11 @@
           </DockPanel>
         </Border>
         <Button Style="{StaticResource Button.Filled.Large}" Content="Сопрячь" c:A.Icon="{StaticResource Icon.Link}" HorizontalAlignment="Center"
-                Margin="0,32,0,0" Command="{Binding PairCommand}" IsEnabled="{Binding IsWorking, Converter={StaticResource Not}}" IsDefault="True" />
+                Margin="0,32,0,0" Command="{Binding PairCommand}" IsEnabled="{Binding IsWorking, Converter={StaticResource Not}}"
+                Visibility="{Binding NeedsWords, Converter={StaticResource VisibleWhen}, ConverterParameter=invert}" />
+        <Button Style="{StaticResource Button.Filled.Large}" Content="Привязать этот ПК" c:A.Icon="{StaticResource Icon.Devices}" HorizontalAlignment="Center"
+                Margin="0,24,0,0" Command="{Binding PairWordsCommand}" IsDefault="True"
+                Visibility="{Binding NeedsWords, Converter={StaticResource VisibleWhen}}" />
       </StackPanel>
     </Grid>
   </DataTemplate>

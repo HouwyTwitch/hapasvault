@@ -15,6 +15,18 @@ public interface ITokenClient : IDisposable
     Task DetachAsync();
     Task ConnectAsync();
     Task PairAsync();
+    /// <summary>Привязать этот ПК к уже настроенному токену по 24 словам.</summary>
+    Task PairWithWordsAsync(string words);
+    /// <summary>Что подключено (до сессии): чистый токен или уже настроенный.</summary>
+    Task<TokenWho> WhoAsync();
+    /// <summary>Токены, которые знает этот ПК (до 4); нужный выбирается сам.</summary>
+    IReadOnlyList<KnownToken> KnownTokens { get; }
+    Task RenameTokenAsync(int index, string label);
+    Task ForgetTokenAsync(int index);
+    /// <summary>Компьютеры, привязанные к подключённому токену (до 4).</summary>
+    Task<IReadOnlyList<PairedPc>> GetPcsAsync();
+    Task RemovePcAsync(int slot);
+    Task SetPcLabelAsync(string label);
     Task ForgetPairingAsync();
     Task<TokenInfo> GetInfoAsync();
 

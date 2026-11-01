@@ -6,6 +6,7 @@
 #include "pmnet.h"
 #include "pmserial.h"
 #include "monocypher.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -87,6 +88,15 @@ void pmapi_set_argon(pmapi *h, uint32_t kib, uint32_t passes)
     if (passes >= 1) h->c.argon_passes = passes;
 }
 
+/* После подключения: известный токен — сессия; незнакомый — не ошибка, программа предложит
+ * привязку (pmapi_is_paired() == 0, pmapi_who() скажет, чистый он или настроенный). */
+static int attach_connect(pmapi *h)
+{
+    if (h->c.known_n == 0 && !h->c.paired) return 0;
+    int rc = pmc_connect(&h->c);
+    return rc == PMC_E_NOT_PAIRED ? 0 : rc;
+}
+
 int pmapi_attach(pmapi *h, uint16_t port)
 {
     pmapi_detach(h);
@@ -95,7 +105,7 @@ int pmapi_attach(pmapi *h, uint16_t port)
     /* токен отвечает за миллисекунды; молчание = занят другим клиентом или завис */
     pm_net_set_timeout(h->sock, PMAPI_IO_TIMEOUT_MS);
     h->transport = T_TCP;
-    return io(h, h->c.paired ? pmc_connect(&h->c) : 0);
+    return io(h, attach_connect(h));
 }
 
 int pmapi_find_usb(char *path, size_t cap) { return pm_serial_find(path, cap); }
@@ -108,7 +118,7 @@ int pmapi_attach_serial(pmapi *h, const char *path)
     h->serial = pm_serial_open(path, PMAPI_USB_TIMEOUT_MS, &busy);
     if (h->serial == PM_BAD_SERIAL) return busy ? PMC_E_BUSY : PMC_E_NO_DEVICE;
     h->transport = T_SERIAL;
-    return io(h, h->c.paired ? pmc_connect(&h->c) : 0);
+    return io(h, attach_connect(h));
 }
 
 int pmapi_attach_usb(pmapi *h)
@@ -139,22 +149,64 @@ int pmapi_pair(pmapi *h)
 {
     int rc = io(h, pmc_pair(&h->c));
     if (rc != 0) return rc;
-    /* новый токен: старая половина ключа к нему не подходит */
-    h->c.have_kpc = 0;
-    crypto_wipe(h->c.k_pc, 32);
+    rc = save_id(h);
+    return rc != 0 ? rc : io(h, pmc_connect(&h->c));
+}
+
+int pmapi_pair_words(pmapi *h, const char *words)
+{
+    int rc = io(h, pmc_pair_words(&h->c, words));
+    if (rc != 0) return rc;
     rc = save_id(h);
     return rc != 0 ? rc : io(h, pmc_connect(&h->c));
 }
 
 int pmapi_forget_pairing(pmapi *h)
 {
-    pm_session_clear(&h->c.sess);
-    h->c.paired = 0;
-    h->c.have_kpc = 0;
-    crypto_wipe(h->c.token_pk, 32);
-    crypto_wipe(h->c.k_pc, 32);
+    pmc_forget_token(&h->c, -1);
     return save_id(h);
 }
+
+int pmapi_who(pmapi *h, uint8_t token_id[8], int *setup, int *pcs)
+{
+    uint8_t pk[32];
+    int rc = io(h, pmc_who(&h->c, pk, setup, pcs));
+    if (rc == 0) memcpy(token_id, pk, 8);
+    return rc;
+}
+
+int pmapi_token_count(const pmapi *h) { return h->c.known_n; }
+
+int pmapi_token_get(const pmapi *h, int index, uint8_t token_id[8], char *label, size_t cap, int *active)
+{
+    if (index < 0 || index >= h->c.known_n || cap == 0) return PMC_E_BUF;
+    const pmc_token *t = &h->c.known[index];
+    memcpy(token_id, t->token_pk, 8);
+    snprintf(label, cap, "%s", t->label);
+    *active = h->c.paired && crypto_verify32(t->token_pk, h->c.token_pk) == 0;
+    return 0;
+}
+
+int pmapi_token_rename(pmapi *h, int index, const char *label)
+{
+    if (index < 0 || index >= h->c.known_n) return PMC_E_BUF;
+    size_t l = strlen(label);
+    if (l >= PMC_LABEL) l = PMC_LABEL - 1;
+    while (l && ((unsigned char)label[l] & 0xC0) == 0x80) l--;   /* не резать символ UTF-8 */
+    memset(h->c.known[index].label, 0, PMC_LABEL);
+    memcpy(h->c.known[index].label, label, l);
+    return save_id(h);
+}
+
+int pmapi_token_forget(pmapi *h, int index)
+{
+    pmc_forget_token(&h->c, index);
+    return save_id(h);
+}
+
+int pmapi_pc_list(pmapi *h, pmapi_pc_cb cb, void *ctx) { return io(h, pmc_pc_list(&h->c, cb, ctx)); }
+int pmapi_pc_remove(pmapi *h, int slot) { return io(h, pmc_pc_remove(&h->c, slot)); }
+int pmapi_pc_label(pmapi *h, const char *label) { return io(h, pmc_pc_label(&h->c, label)); }
 
 int pmapi_connect(pmapi *h) { return io(h, pmc_connect(&h->c)); }
 
