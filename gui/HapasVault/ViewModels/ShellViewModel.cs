@@ -214,6 +214,11 @@ public sealed partial class ShellViewModel : ObservableObject
                     if (Page is ConnectViewModel cv) cv.Error = e.Message;
                     else Page = new ConnectViewModel(this) { Error = e.Message };
                     break;
+                case TokenError.Version:
+                    // прошивка другой версии: работать нельзя, но и пустого окна быть не должно
+                    Info = null;
+                    Page = new ConnectViewModel(this) { Error = e.Message };
+                    break;
                 case TokenError.ForeignToken:
                     Page = new ConnectViewModel(this) { Error = e.Message + " Сбросьте токен на том компьютере или подключите свой." };
                     break;
@@ -244,7 +249,8 @@ public sealed partial class ShellViewModel : ObservableObject
                     await RefreshAsync();
                     break;
                 default:
-                    Snackbar.Show(e.Message);
+                    if (Page == null) Page = new ConnectViewModel(this) { Error = e.Message };
+                    else Snackbar.Show(e.Message);
                     break;
             }
         }

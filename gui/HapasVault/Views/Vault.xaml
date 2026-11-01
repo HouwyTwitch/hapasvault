@@ -550,7 +550,7 @@
               </StackPanel>
               <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0"
                           Visibility="{Binding ShowPort, Converter={StaticResource VisibleWhen}}">
-                <TextBox Style="{StaticResource TextField.Mono}" Width="140" c:A.Label="Порт симулятора" c:A.Error="{Binding PortError}"
+                <TextBox Style="{StaticResource TextField.Mono}" Width="140" c:A.Label="Порт" c:A.Error="{Binding PortError}"
                          Text="{Binding PortText, UpdateSourceTrigger=PropertyChanged}" />
                 <Button Style="{StaticResource Button.Outlined}" Margin="12,8,0,0" VerticalAlignment="Top" Content="Применить" Command="{Binding ApplyPortCommand}" />
               </StackPanel>

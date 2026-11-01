@@ -187,10 +187,17 @@ jobs:
         if: github.ref == 'refs/heads/claude/epic-gates-nyqalp'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force review | Out-Null
-          Copy-Item screenshots/14b-settings-storage.* review/
+          Add-Type -AssemblyName System.Drawing
+          $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object MimeType -eq 'image/jpeg'
+          $q = New-Object System.Drawing.Imaging.EncoderParameters 1
+          $q.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality), 88L
+          Remove-Item docs/screenshots/*.jpg
+          foreach ($n in '05-setup-words','08-lock','10-vault','11-editor','11b-steam','14-settings','14b-settings-storage','15-vault-dark','18-radial','19-radial-rings') {
+            $img = [System.Drawing.Image]::FromFile("$PWD/screenshots/$n.png")
+            $img.Save("$PWD/docs/screenshots/$n.jpg", $codec, $q); $img.Dispose()
+          }
           git config user.name "ci"; git config user.email "ci@example.invalid"
-          git add -f review; git commit -m "review screenshots [skip ci]"; git push origin HEAD:${{ github.ref_name }}
+          git add -A docs/screenshots; git commit -m "docs: refresh screenshots [skip ci]"; git push origin HEAD:${{ github.ref_name }}
 
       - name: Upload screenshots
         if: always()
