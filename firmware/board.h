@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Функции платы помимо hal.h (вызывает только main.c). */
 #ifndef PM_BOARD_H
 #define PM_BOARD_H

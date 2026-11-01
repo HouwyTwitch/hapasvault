@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "sha.h"
 #include "monocypher.h"
 #include <string.h>

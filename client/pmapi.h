@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * pmapi — C ABI для GUI (C# P/Invoke). Собирается в pmapi.dll / pmapi.so.
  *

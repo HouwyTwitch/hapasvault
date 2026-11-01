@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * HAL — единственное, что отличает симулятор от реального RP2040.
  * Ядро (token.c, vault.c, session.c) вызывает только эти функции.

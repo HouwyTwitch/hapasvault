@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Прошивка pmtoken в эмуляторе RP2040 (rp2040js) с мостом USB CDC <-> TCP.
 //
 //   npm ci && node emu.js ../../build-fw/pmtoken.uf2 [порт]

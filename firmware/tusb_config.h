@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef PM_TUSB_CONFIG_H
 #define PM_TUSB_CONFIG_H
 

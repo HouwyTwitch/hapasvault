@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* USB: одно устройство CDC ACM («виртуальный COM-порт»), драйвер встроен в ОС. */
 #include "proto.h"
 #include "pico/unique_id.h"
@@ -37,9 +38,9 @@ static char serial_str[PICO_UNIQUE_BOARD_ID_SIZE_BYTES * 2 + 1];
 
 static const char *const strings[STR_COUNT] = {
     [STR_MANUF] = "HapasVault",
-    [STR_PRODUCT] = "pmtoken",
+    [STR_PRODUCT] = PM_USB_PRODUCT,     /* по нему клиент отличает токен от чужих 1209:0001 */
     [STR_SERIAL] = serial_str,
-    [STR_CDC] = "pmtoken",
+    [STR_CDC] = PM_USB_PRODUCT,         /* Windows показывает имя интерфейса составного устройства */
 };
 
 const uint8_t *tud_descriptor_device_cb(void) { return (const uint8_t *)&desc_device; }

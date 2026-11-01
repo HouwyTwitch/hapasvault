@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * HAL для RP2040 (Pico) и RP2350 (Pico 2).
  *

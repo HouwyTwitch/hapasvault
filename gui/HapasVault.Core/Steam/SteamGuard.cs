@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "bip39.h"
 #include "sha.h"
 #include <ctype.h>

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 namespace HapasVault.Core;
 
 /// <summary>Операции с токеном. Реализации: TokenClient (pmapi) и демо-клиент GUI.</summary>

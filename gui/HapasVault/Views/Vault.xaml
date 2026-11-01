@@ -612,7 +612,7 @@
           </c:MorphShape>
           <TextBlock Style="{StaticResource Body.Medium}" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}">
             <Run Text="HapasVault" FontWeight="SemiBold" /><Run Text=" " /><Run Text="{Binding Version, Mode=OneWay}" />
-            <Run Text=" · Material 3 Expressive · шрифт Roboto, иконки Material Symbols" />
+            <Run Text=" · свободное ПО, GNU GPL v3 · шрифт Roboto, иконки Material Symbols" />
           </TextBlock>
         </StackPanel>
       </StackPanel>

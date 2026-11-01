@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* HAL для ПК: flash = файл, RNG = ОС, время = монотонные часы. */
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* BIP39 English wordlist (from bitcoin/bips, MIT). Generated. */
 #include "bip39.h"
 const char *const bip39_english[2048] = {

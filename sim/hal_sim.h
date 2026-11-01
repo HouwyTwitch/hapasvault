@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Дополнительные функции HAL симулятора (для main и тестов). */
 #ifndef PM_HAL_SIM_H
 #define PM_HAL_SIM_H

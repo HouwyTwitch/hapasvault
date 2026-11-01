@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Чтение/запись полей протокола (little-endian) с проверкой границ. */
 #ifndef PM_WIRE_H
 #define PM_WIRE_H

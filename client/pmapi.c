@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #define PMAPI_BUILD
 #include "pmapi.h"
 #include "bip39.h"

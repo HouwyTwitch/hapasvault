@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 namespace HapasVault.Core;
 
 // await недоступен в unsafe-контексте, поэтому планировщик вызовов — в отдельной части класса.

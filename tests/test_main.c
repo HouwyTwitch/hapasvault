@@ -1,9 +1,14 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * Тесты: клиент и токен в одном процессе, транспорт — прямой вызов token_handle().
  */
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
+#else
+#  define _DEFAULT_SOURCE
+#  include <sys/stat.h>
+#  include <unistd.h>
 #endif
 
 #include "bip39.h"
@@ -18,6 +23,7 @@
 #include "sha.h"
 #include "otp.h"
 #include "framer.h"
+#include "pmserial.h"
 #include "wire.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -700,6 +706,47 @@ static void test_framer(void)
     pm_framer_reset(&f);
     r = pm_framer_feed(&f, buf, sizeof buf, stream + 9, 7, &used);
     CHECK(r == 3, "после сброса — снова синхронно");
+
+    section("USB: токен узнаётся по имени, чужой 1209:0001 — нет");
+    CHECK(pm_serial_name_ok("pmtoken") && pm_serial_name_ok("pmtoken\n") && pm_serial_name_ok(" PMToken "), "pmtoken");
+    CHECK(!pm_serial_name_ok("pmtoken2") && !pm_serial_name_ok("Pico") && !pm_serial_name_ok("") &&
+          !pm_serial_name_ok("USB Serial Device"), "чужие имена");
+
+#ifndef _WIN32
+    section("USB: поиск в sysfs — VID/PID и имя");
+    {
+        /* <root>/devs/{tok,pico}: устройства; <root>/tty/ttyACM{0,1}/device -> интерфейс */
+        char root[] = "/tmp/pmsysfs-XXXXXX", p[600], found[64];
+        CHECK(mkdtemp(root) != NULL, "временный каталог");
+        const char *dev[2][3] = {{"pico", "Pico", "ttyACM0"}, {"tok", "pmtoken", "ttyACM1"}};
+        snprintf(p, sizeof p, "%s/devs", root); mkdir(p, 0700);
+        snprintf(p, sizeof p, "%s/tty", root); mkdir(p, 0700);
+        for (int i = 0; i < 2; i++) {
+            const char *files[3][2] = {{"idVendor", "1209\n"}, {"idProduct", "0001\n"}, {"product", dev[i][1]}};
+            snprintf(p, sizeof p, "%s/devs/%s", root, dev[i][0]); mkdir(p, 0700);
+            snprintf(p, sizeof p, "%s/devs/%s/if0", root, dev[i][0]); mkdir(p, 0700);
+            for (int k = 0; k < 3; k++) {
+                snprintf(p, sizeof p, "%s/devs/%s/%s", root, dev[i][0], files[k][0]);
+                FILE *f = fopen(p, "w"); fputs(files[k][1], f); fclose(f);
+            }
+            snprintf(p, sizeof p, "%s/tty/%s", root, dev[i][2]); mkdir(p, 0700);
+            char target[300];
+            snprintf(target, sizeof target, "%s/devs/%s/if0", root, dev[i][0]);
+            snprintf(p, sizeof p, "%s/tty/%s/device", root, dev[i][2]);
+            if (symlink(target, p) != 0) perror("symlink");
+        }
+        snprintf(p, sizeof p, "%s/tty", root);
+        CHECK(pm_serial_find_in(p, found, sizeof found) == 1 && !strcmp(found, "/dev/ttyACM1"),
+              "из двух 1209:0001 выбран pmtoken, не Pico");
+        snprintf(p, sizeof p, "%s/devs/tok/product", root);
+        FILE *f = fopen(p, "w"); fputs("Other", f); fclose(f);
+        snprintf(p, sizeof p, "%s/tty", root);
+        CHECK(pm_serial_find_in(p, found, sizeof found) == 0, "оба чужие — не найден");
+        char cmd[700];
+        snprintf(cmd, sizeof cmd, "rm -rf '%s'", root);
+        if (system(cmd) != 0) puts("  (не удалось убрать временный каталог)");
+    }
+#endif
 
     section("token_handle: вход и выход в одном буфере");
     hal_sim_erase();
