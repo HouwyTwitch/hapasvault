@@ -103,8 +103,7 @@ static int confirm_words(const char *words)
     /* Проверяем 3 случайных слова из 24, чтобы убедиться, что фразу записали */
     char copy[512], *w[24];
     int n = 0;
-    strncpy(copy, words, sizeof copy - 1);
-    copy[sizeof copy - 1] = 0;
+    snprintf(copy, sizeof copy, "%s", words);
     for (char *t = strtok(copy, " "); t && n < 24; t = strtok(NULL, " ")) w[n++] = t;
     srand((unsigned)time(NULL));   /* выбор слов для проверки — не секрет */
     int idx[3] = {rand() % 8, 8 + rand() % 8, 16 + rand() % 8};
@@ -112,8 +111,11 @@ static int confirm_words(const char *words)
         char prompt[64], ans[64];
         snprintf(prompt, sizeof prompt, "  слово №%d: ", idx[i] + 1);
         read_line(prompt, ans, sizeof ans);
-        if (strcmp(ans, w[idx[i]]) != 0) return 0;
+        int ok = strcmp(ans, w[idx[i]]) == 0;
+        crypto_wipe(ans, sizeof ans);
+        if (!ok) { crypto_wipe(copy, sizeof copy); return 0; }
     }
+    crypto_wipe(copy, sizeof copy);     /* копия фразы восстановления */
     return 1;
 }
 
