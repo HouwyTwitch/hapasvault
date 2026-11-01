@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -28,8 +29,10 @@ public sealed record SteamConfirmation(
 /// <summary>Ключ подтверждения по (время, тег) — его считает токен.</summary>
 public delegate Task<byte[]> SteamKeySource(long unixTime, string tag);
 
-public sealed class SteamException(string message, bool needsLogin = false, int eresult = 0) : Exception(message)
+public sealed class SteamException(string message, bool needsLogin = false, int eresult = 0, bool network = false) : Exception(message)
 {
+    /// <summary>Не дошли до сервера (сеть, TLS, прокси).</summary>
+    public bool Network { get; } = network;
     /// <summary>Сессия недействительна — нужен вход заново.</summary>
     public bool NeedsLogin { get; } = needsLogin;
     public int EResult { get; } = eresult;
@@ -63,15 +66,86 @@ public sealed class SteamWeb : ISteamWeb, IDisposable
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
 
     public SteamWeb(HttpMessageHandler? handler = null, Func<DateTimeOffset>? clock = null,
-                    Func<TimeSpan, CancellationToken, Task>? delay = null)
+                    Func<TimeSpan, CancellationToken, Task>? delay = null, IWebProxy? proxy = null)
     {
-        _http = new HttpClient(handler ?? new HttpClientHandler { UseCookies = false }) { Timeout = TimeSpan.FromSeconds(20) };
+        _http = new HttpClient(handler ?? new SocketsHttpHandler
+        {
+            UseCookies = false,
+            ConnectTimeout = TimeSpan.FromSeconds(15),
+            // null — системный прокси Windows; иначе свой (http://, socks5://) — на случай, если
+            // провайдер не пускает к steamcommunity.com
+            Proxy = proxy ?? HttpClient.DefaultProxy,
+            UseProxy = true,
+        }) { Timeout = TimeSpan.FromSeconds(30) };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("okhttp/4.9.2");
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _delay = delay ?? Task.Delay;
     }
 
     public void Dispose() => _http.Dispose();
+
+    /// <summary>Прокси из настроек: http://, https://, socks4://, socks5://host:port. null — пусто (системный).</summary>
+    public static IWebProxy? ParseProxy(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        string t = text.Trim();
+        if (!t.Contains("://")) t = "http://" + t;
+        if (!Uri.TryCreate(t, UriKind.Absolute, out var uri) || uri.Port <= 0 ||
+            uri.Scheme is not ("http" or "https" or "socks4" or "socks4a" or "socks5"))
+            throw new FormatException("Прокси: http://host:port или socks5://host:port");
+        var p = new WebProxy(uri);
+        if (uri.UserInfo is { Length: > 0 } ui && ui.Split(':', 2) is [var user, var pass])
+            p.Credentials = new NetworkCredential(Uri.UnescapeDataString(user), Uri.UnescapeDataString(pass));
+        return p;
+    }
+
+    /// <summary>
+    /// Отправить запрос; сетевую ошибку превратить в понятное сообщение: какой сервер
+    /// и что именно (обрыв TLS, DNS, таймаут) — иначе «нет связи» не диагностировать.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
+    {
+        string host = req.RequestUri?.Host ?? "Steam";
+        try
+        {
+            return await _http.SendAsync(req, ct);
+        }
+        catch (HttpRequestException e)
+        {
+            throw new SteamException($"Нет связи с {host}: {Innermost(e)}. Если интернет работает, сервер может быть " +
+                                     "недоступен у провайдера — укажите прокси в Настройки → Steam.", network: true);
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new SteamException($"{host} не ответил за 30 с. Проверьте интернет или прокси (Настройки → Steam).", network: true);
+        }
+    }
+
+    /// <summary>Доступность серверов Steam: вход (api) и подтверждения (community).</summary>
+    public async Task<IReadOnlyList<(string Host, string? Error)>> ProbeAsync(CancellationToken ct = default)
+    {
+        var result = new List<(string, string?)>();
+        foreach (var url in new[] { $"{Api}/ISteamWebAPIUtil/GetServerInfo/v1/", $"{Community}/mobileconf/getlist" })
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            try
+            {
+                using var resp = await SendAsync(req, ct);
+                result.Add((req.RequestUri!.Host, null));     // любой HTTP-ответ — сервер доступен
+            }
+            catch (SteamException e)
+            {
+                result.Add((req.RequestUri!.Host, e.Message));
+            }
+        }
+        return result;
+    }
+
+    private static string Innermost(Exception e)
+    {
+        while (e.InnerException != null) e = e.InnerException;
+        return e.Message.TrimEnd('.');
+    }
 
     /// <summary>Идентификатор устройства, как у steam-totp/SDA: android:<sha1(steamid) в виде GUID>.</summary>
     public static string DeviceIdFor(ulong steamId)
@@ -93,7 +167,7 @@ public sealed class SteamWeb : ISteamWeb, IDisposable
                 Content = new MultipartFormDataContent { { new StringContent(encoded), "input_protobuf_encoded" } },
             };
         req.Headers.Add("Cookie", MobileCookies);
-        using var resp = await _http.SendAsync(req, ct);
+        using var resp = await SendAsync(req, ct);
         if (!resp.IsSuccessStatusCode) throw new SteamException($"Steam ответил {(int)resp.StatusCode}");
         int eresult = resp.Headers.TryGetValues("x-eresult", out var er) && int.TryParse(er.FirstOrDefault(), out int e) ? e : 1;
         if (eresult != 1) throw new SteamException(DescribeEResult(eresult), eresult: eresult);
@@ -203,7 +277,7 @@ public sealed class SteamWeb : ISteamWeb, IDisposable
     {
         req.Headers.Add("Cookie", Cookies(s));
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        using var resp = await _http.SendAsync(req, ct);
+        using var resp = await SendAsync(req, ct);
         if ((int)resp.StatusCode is 401 or 403) throw new SteamException("Сессия Steam истекла.", needsLogin: true);
         if (!resp.IsSuccessStatusCode) throw new SteamException($"steamcommunity.com ответил {(int)resp.StatusCode}");
         string body = await resp.Content.ReadAsStringAsync(ct);

@@ -58,6 +58,35 @@ public class SteamParseTests
         Assert.Contains("10–64", Assert.Throws<FormatException>(() => OtpSecret.ParseIdentity("AAAA")).Message);
     }
 
+    [Theory]
+    [InlineData("socks5://127.0.0.1:1080", "socks5")]
+    [InlineData("http://user:p%40ss@proxy.local:3128", "http")]
+    [InlineData("10.0.0.1:8080", "http")]
+    public void ProxyParsing(string text, string scheme)
+    {
+        var p = (System.Net.WebProxy)SteamWeb.ParseProxy(text)!;
+        Assert.Equal(scheme, p.Address!.Scheme);
+        if (text.Contains('@')) Assert.Equal("p@ss", ((System.Net.NetworkCredential)p.Credentials!).Password);
+        Assert.Null(SteamWeb.ParseProxy("  "));
+        Assert.Throws<FormatException>(() => SteamWeb.ParseProxy("ftp://x:21"));
+    }
+
+    private sealed class ResetHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct) =>
+            throw new HttpRequestException("send failed", new System.Net.Sockets.SocketException(10054));
+    }
+
+    [Fact]
+    public async Task NetworkErrorNamesHostAndCause()
+    {
+        using var web = new SteamWeb(new ResetHandler());
+        var probe = await web.ProbeAsync();
+        Assert.Equal(["api.steampowered.com", "steamcommunity.com"], probe.Select(p => p.Host));
+        Assert.All(probe, p => Assert.Contains("прокси", p.Error));
+        Assert.Contains("steamcommunity.com", probe[1].Error);
+    }
+
     [Fact]
     public void DeviceIdLikeSteamTotp()
     {

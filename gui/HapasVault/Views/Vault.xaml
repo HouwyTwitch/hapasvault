@@ -586,6 +586,30 @@
           </DockPanel>
         </Border>
 
+        <TextBlock Style="{StaticResource Section}" Text="Steam" />
+        <Border Style="{StaticResource SettingRow}" CornerRadius="28">
+          <StackPanel>
+            <DockPanel>
+              <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                <TextBox Style="{StaticResource TextField.Mono}" Width="260" c:A.Label="Прокси" c:A.Error="{Binding SteamProxyError}"
+                         Text="{Binding SteamProxy, UpdateSourceTrigger=PropertyChanged}" />
+                <Button Style="{StaticResource Button.Outlined}" Margin="12,8,0,0" VerticalAlignment="Top" Content="Применить"
+                        Command="{Binding ApplySteamProxyCommand}" />
+              </StackPanel>
+              <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                <TextBlock Style="{StaticResource SettingTitle}" Text="Сеть для подтверждений" />
+                <TextBlock Style="{StaticResource SettingHint}" TextWrapping="Wrap"
+                           Text="Пусто — как в Windows. Если провайдер не пускает к Steam: http://host:port или socks5://host:port" />
+              </StackPanel>
+            </DockPanel>
+            <DockPanel Margin="0,12,0,0">
+              <Button DockPanel.Dock="Right" Style="{StaticResource Button.Tonal}" Content="Проверить связь" VerticalAlignment="Top"
+                      Command="{Binding CheckSteamCommand}" IsEnabled="{Binding SteamChecking, Converter={StaticResource Not}}" />
+              <TextBlock Style="{StaticResource SettingHint}" TextWrapping="Wrap" Margin="0,0,16,0" Text="{Binding SteamStatus}" />
+            </DockPanel>
+          </StackPanel>
+        </Border>
+
         <TextBlock Style="{StaticResource Section}" Text="Обновления" />
         <Border Style="{StaticResource SettingRow}" CornerRadius="28,28,6,6">
           <DockPanel>
