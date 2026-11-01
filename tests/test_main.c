@@ -5,6 +5,7 @@
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
+#  include <wincrypt.h>
 #else
 #  define _DEFAULT_SOURCE
 #  include <sys/stat.h>
@@ -941,9 +942,22 @@ static void test_multi_token(void)
         memcpy(v1 + 70, c2.known[0].k_pc, 32);
         int ia = memcmp(c2.known[0].token_pk, pk_a, 32) == 0 ? 0 : 1;
         memcpy(v1 + 70, c2.known[ia].k_pc, 32);
+        const uint8_t *fd = v1;
+        size_t fl = sizeof v1;
+#ifdef _WIN32
+        /* на Windows файл ключа всегда под DPAPI — и старый тоже */
+        DATA_BLOB in = {(DWORD)sizeof v1, v1}, out = {0, NULL};
+        CHECK(CryptProtectData(&in, L"pmtoken identity", NULL, NULL, NULL, CRYPTPROTECT_UI_FORBIDDEN, &out),
+              "DPAPI");
+        fd = out.pbData;
+        fl = out.cbData;
+#endif
         FILE *f = fopen("v1.id", "wb");
-        fwrite(v1, 1, sizeof v1, f);
+        fwrite(fd, 1, fl, f);
         fclose(f);
+#ifdef _WIN32
+        LocalFree(out.pbData);
+#endif
         pm_client old;
         new_client(&old);
         CHECK_RC(pmc_identity_load(&old, "v1.id"), 0, "загружен v1");
