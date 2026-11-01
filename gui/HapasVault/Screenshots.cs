@@ -169,7 +169,13 @@ internal static class Screenshots
             var settings = (SettingsViewModel)vaultShell!.Current!;
             if (!settings.StorageKnown || settings.StorageValue <= 0 || !settings.StorageHint.Contains("поместится"))
                 throw new InvalidOperationException("память токена не показана: " + settings.StorageText);
-            if (FindText(window, "Память токена") is { } t) t.BringIntoView();
+            if (FindText(window, "Память токена") is { } t)
+            {
+                DependencyObject? p = t;
+                while (p != null && p is not ScrollViewer) p = VisualTreeHelper.GetParent(p);
+                if (p is ScrollViewer sv)
+                    sv.ScrollToVerticalOffset(sv.VerticalOffset + t.TranslatePoint(new Point(0, 0), sv).Y - 120);
+            }
         });
 
         await Shot("15-vault-dark", async () =>
