@@ -1,9 +1,14 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * Тесты: клиент и токен в одном процессе, транспорт — прямой вызов token_handle().
  */
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
+#else
+#  define _DEFAULT_SOURCE
+#  include <sys/stat.h>
+#  include <unistd.h>
 #endif
 
 #include "bip39.h"
@@ -18,6 +23,7 @@
 #include "sha.h"
 #include "otp.h"
 #include "framer.h"
+#include "pmserial.h"
 #include "wire.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -81,9 +87,11 @@ static int memfind(const uint8_t *hay, size_t n, const void *needle, size_t m)
 }
 
 static int g_log_n, g_log_wrong;
+static uint8_t g_log_cmd[64];
 static void log_cb(void *ctx, uint32_t t, uint8_t cmd, uint8_t st, uint32_t id)
 {
     (void)ctx; (void)t; (void)id;
+    if (g_log_n < 64) g_log_cmd[g_log_n] = cmd;
     g_log_n++;
     if (cmd == CMD_UNLOCK && st == ST_WRONG_KEY) g_log_wrong++;
 }
@@ -541,6 +549,126 @@ static void test_otp_protocol(void)
     pmc_wipe(&c);
 }
 
+/* STEAM_MOBILE: [3][1][5][30][n][shared][m][identity][u64 steamid][r][revocation] */
+static size_t steam_blob(uint8_t *b, const char *shared, const char *identity, uint64_t sid, const char *rev)
+{
+    size_t n = 0, l;
+    b[n++] = OTP_STEAM_MOBILE; b[n++] = PM_SHA1; b[n++] = 5; b[n++] = 30;
+    l = strlen(shared);   b[n++] = (uint8_t)l; memcpy(b + n, shared, l); n += l;
+    l = strlen(identity); b[n++] = (uint8_t)l; memcpy(b + n, identity, l); n += l;
+    for (int i = 0; i < 8; i++) b[n++] = (uint8_t)(sid >> (8 * i));
+    l = strlen(rev);      b[n++] = (uint8_t)l; memcpy(b + n, rev, l); n += l;
+    return n;
+}
+
+static int hex_eq(const uint8_t *b, const char *hex)
+{
+    for (size_t i = 0; hex[2 * i]; i++) {
+        unsigned v;
+        if (sscanf(hex + 2 * i, "%2x", &v) != 1 || b[i] != v) return 0;
+    }
+    return 1;
+}
+
+static void test_steam_confirmations(void)
+{
+    pm_client c;
+    uint8_t kv[32], key[20];
+    char code[16], rev[32];
+    fresh_vault(&c, kv);
+
+    section("Steam: разбор параметров");
+    uint8_t b[OTP_BLOB_MAX];
+    size_t bl = steam_blob(b, "steam-test-secret-1234", "steam-identity-secret-01", 76561197960287930ull, "R12345");
+    CHECK(pm_otp_validate(b, bl) == 0, "валидный блок");
+    CHECK(bl <= OTP_BLOB_MAX, "влезает в OTP_BLOB_MAX");
+    b[bl - 1] = ' ';
+    CHECK(pm_otp_validate(b, bl) != 0, "непечатный код восстановления — отказ");
+    bl = steam_blob(b, "steam-test-secret-1234", "short", 1, "");
+    CHECK(pm_otp_validate(b, bl) != 0, "короткий identity_secret — отказ");
+    CHECK(pm_otp_validate(b, bl - 1) != 0, "обрезанный блок — отказ");
+    CHECK(pm_steam_tag_ok((const uint8_t *)"details123", 10) && !pm_steam_tag_ok((const uint8_t *)"Conf", 4) &&
+          !pm_steam_tag_ok((const uint8_t *)"", 0), "теги: [a-z0-9], 1..32");
+
+    section("Steam: ключи подтверждений считает токен");
+    bl = steam_blob(b, "steam-test-secret-1234", "steam-identity-secret-01", 76561197960287930ull, "R12345");
+    uint32_t id, totp;
+    CHECK_RC(pmc_add_otp(&c, "Игры", "Steam", "gamer", "pw", b, bl, &id), 0, "запись с подтверждениями");
+    uint8_t tb[40];
+    size_t tl = otp_blob(tb, OTP_TOTP, PM_SHA1, 6, 30, "12345678901234567890");
+    CHECK_RC(pmc_add_otp(&c, "", "Обычный TOTP", "", "", tb, tl, &totp), 0, "запись с TOTP");
+    memset(g_list_otp, 0xEE, sizeof g_list_otp);
+    pmc_list(&c, otp_cb, NULL);
+    CHECK(g_list_otp[id] == OTP_STEAM_MOBILE, "список: тип 3");
+    CHECK_RC(pmc_otp(&c, id, 1700000000, code, sizeof code, NULL, NULL), 0, "код входа");
+    CHECK(!strcmp(code, "T7WDC"), "код входа из shared_secret");
+    CHECK_RC(pmc_steam_conf(&c, id, 1700000000, "conf", key), 0, "ключ списка");
+    CHECK(hex_eq(key, "18d97b0ee4409ea0b28919293b68beac46afb3b6"), "conf: совпал с эталоном");
+    CHECK_RC(pmc_steam_conf(&c, id, 1700000000, "allow", key), 0, "ключ одобрения");
+    CHECK(hex_eq(key, "3a8d79b3d6a5bd02aa3db74bc3603e0c4c21a6ab"), "allow: совпал с эталоном");
+    CHECK_RC(pmc_steam_conf(&c, id, 1700000030, "details12345", key), 0, "ключ деталей");
+    CHECK(hex_eq(key, "d4d392d35e37e7de21aeb76aed7a49e58b023e84"), "details: совпал с эталоном");
+    CHECK_RC(pmc_steam_conf(&c, id, 1710000000, "allow", key), ST_BAD_TIME, "ключи «из будущего» — нет");
+    CHECK_RC(pmc_steam_conf(&c, totp, 1700000000, "conf", key), ST_NO_OTP, "у TOTP нет identity_secret");
+    CHECK_RC(pmc_steam_conf(&c, id, 1700000000, "Allow!", key), ST_BAD_ARGS, "тег с чужими символами");
+
+    section("Steam: SteamID и код восстановления");
+    uint64_t sid = 0;
+    CHECK_RC(pmc_steam_info(&c, id, &sid, NULL, 0), 0, "SteamID");
+    CHECK(sid == 76561197960287930ull, "SteamID верный");
+    CHECK_RC(pmc_steam_info(&c, id, &sid, rev, sizeof rev), 0, "код восстановления");
+    CHECK(!strcmp(rev, "R12345"), "код восстановления верный");
+    CHECK_RC(pmc_steam_info(&c, totp, &sid, NULL, 0), ST_NO_OTP, "у TOTP нет Steam");
+
+    section("Steam: журнал, лимит, секреты не видны");
+    int acts = 0;
+    g_log_n = 0;
+    pmc_log(&c, log_cb, NULL);
+    for (int i = 0; i < g_log_n; i++) acts += g_log_cmd[i] == CMD_STEAM_CONF;
+    CHECK(acts == 2, "в журнале одобрение и отклонённая попытка, без списка и деталей");
+    hal_sim_advance_ms(TOKEN_RATE_WINDOW_MS + 10);
+    int limited = 0;
+    for (unsigned i = 0; i <= TOKEN_STEAM_RATE_N; i++)
+        if (pmc_steam_conf(&c, id, 1700000000, "conf", key) == ST_RATE_LIMIT) limited = 1;
+    CHECK(limited, "не больше 30 ключей в минуту");
+    const uint8_t *fl = hal_sim_flash();
+    CHECK(!memfind(fl, STORE_TOTAL_BYTES, "steam-identity", 14), "identity_secret не виден в flash");
+    uint32_t id2;
+    uint8_t up[OTP_BLOB_MAX];
+    size_t ul = steam_blob(up, "steam-test-secret-1234", "steam-identity-secret-02", 7, "R99999");
+    CHECK_RC(pmc_update(&c, id, "Игры", "Steam", "gamer", "pw", PMC_OTP_SET, up, ul), 0, "замена секретов");
+    CHECK_RC(pmc_steam_info(&c, id, &sid, NULL, 0), 0, "после замены");
+    CHECK(sid == 7, "новый SteamID");
+    CHECK_RC(pmc_add_otp(&c, "", "x", "", "", up, ul, &id2), 0, "вторая запись");
+    pmc_wipe(&c);
+}
+
+static void test_storage_info(void)
+{
+    pm_client c;
+    uint8_t kv[32];
+    pmc_info_t info;
+    fresh_vault(&c, kv);
+
+    section("INFO: занятое и свободное место");
+    CHECK_RC(pmc_info(&c, &info), 0, "info");
+    CHECK(info.capacity == STORE_PLAIN_MAX, "ёмкость = STORE_PLAIN_MAX");
+    uint32_t empty = info.used;
+    uint32_t id;
+    CHECK_RC(pmc_add(&c, "Кат", "Имя", "логин", "пароль-123", &id), 0, "add");
+    CHECK_RC(pmc_info(&c, &info), 0, "info");
+    /* id 4 + строки с длиной + пароль с u16 + пустой OTP */
+    size_t entry = 4 + 1 + strlen("Кат") + 1 + strlen("Имя") + 1 + strlen("логин") + 2 + strlen("пароль-123") + 1;
+    CHECK(info.used == empty + entry, "used вырос ровно на размер записи");
+    CHECK_RC(pmc_delete(&c, id), 0, "delete");
+    pmc_info(&c, &info);
+    CHECK(info.used == empty, "после удаления — как было");
+    CHECK_RC(pmc_lock(&c), 0, "lock");
+    pmc_info(&c, &info);
+    CHECK(info.used == 0 && info.capacity == STORE_PLAIN_MAX, "закрыто: used не раскрывается");
+    pmc_wipe(&c);
+}
+
 static void test_framer(void)
 {
     section("сборка кадров из потока (USB CDC)");
@@ -578,6 +706,47 @@ static void test_framer(void)
     pm_framer_reset(&f);
     r = pm_framer_feed(&f, buf, sizeof buf, stream + 9, 7, &used);
     CHECK(r == 3, "после сброса — снова синхронно");
+
+    section("USB: токен узнаётся по имени, чужой 1209:0001 — нет");
+    CHECK(pm_serial_name_ok("pmtoken") && pm_serial_name_ok("pmtoken\n") && pm_serial_name_ok(" PMToken "), "pmtoken");
+    CHECK(!pm_serial_name_ok("pmtoken2") && !pm_serial_name_ok("Pico") && !pm_serial_name_ok("") &&
+          !pm_serial_name_ok("USB Serial Device"), "чужие имена");
+
+#ifndef _WIN32
+    section("USB: поиск в sysfs — VID/PID и имя");
+    {
+        /* <root>/devs/{tok,pico}: устройства; <root>/tty/ttyACM{0,1}/device -> интерфейс */
+        char root[] = "/tmp/pmsysfs-XXXXXX", p[600], found[64];
+        CHECK(mkdtemp(root) != NULL, "временный каталог");
+        const char *dev[2][3] = {{"pico", "Pico", "ttyACM0"}, {"tok", "pmtoken", "ttyACM1"}};
+        snprintf(p, sizeof p, "%s/devs", root); mkdir(p, 0700);
+        snprintf(p, sizeof p, "%s/tty", root); mkdir(p, 0700);
+        for (int i = 0; i < 2; i++) {
+            const char *files[3][2] = {{"idVendor", "1209\n"}, {"idProduct", "0001\n"}, {"product", dev[i][1]}};
+            snprintf(p, sizeof p, "%s/devs/%s", root, dev[i][0]); mkdir(p, 0700);
+            snprintf(p, sizeof p, "%s/devs/%s/if0", root, dev[i][0]); mkdir(p, 0700);
+            for (int k = 0; k < 3; k++) {
+                snprintf(p, sizeof p, "%s/devs/%s/%s", root, dev[i][0], files[k][0]);
+                FILE *f = fopen(p, "w"); fputs(files[k][1], f); fclose(f);
+            }
+            snprintf(p, sizeof p, "%s/tty/%s", root, dev[i][2]); mkdir(p, 0700);
+            char target[300];
+            snprintf(target, sizeof target, "%s/devs/%s/if0", root, dev[i][0]);
+            snprintf(p, sizeof p, "%s/tty/%s/device", root, dev[i][2]);
+            if (symlink(target, p) != 0) perror("symlink");
+        }
+        snprintf(p, sizeof p, "%s/tty", root);
+        CHECK(pm_serial_find_in(p, found, sizeof found) == 1 && !strcmp(found, "/dev/ttyACM1"),
+              "из двух 1209:0001 выбран pmtoken, не Pico");
+        snprintf(p, sizeof p, "%s/devs/tok/product", root);
+        FILE *f = fopen(p, "w"); fputs("Other", f); fclose(f);
+        snprintf(p, sizeof p, "%s/tty", root);
+        CHECK(pm_serial_find_in(p, found, sizeof found) == 0, "оба чужие — не найден");
+        char cmd[700];
+        snprintf(cmd, sizeof cmd, "rm -rf '%s'", root);
+        if (system(cmd) != 0) puts("  (не удалось убрать временный каталог)");
+    }
+#endif
 
     section("token_handle: вход и выход в одном буфере");
     hal_sim_erase();
@@ -679,6 +848,8 @@ int main(int argc, char **argv)
     test_otp_protocol();
     test_security_hardening();
     test_framer();
+    test_steam_confirmations();
+    test_storage_info();
     if (argc > 1 && !strcmp(argv[1], "--argon")) test_real_argon_cost();
     printf("\nИтого: %d пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

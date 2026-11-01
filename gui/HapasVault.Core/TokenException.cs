@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 namespace HapasVault.Core;
 
 /// <summary>Что случилось, с точки зрения интерфейса.</summary>
@@ -98,7 +99,7 @@ public sealed class TokenException : Exception
         TokenError.Backoff => "Слишком много неверных попыток. Подождите немного.",
         TokenError.RateLimit => "Слишком много расшифровок подряд. Подождите минуту.",
         TokenError.NotFound => "Запись не найдена.",
-        TokenError.Full => "Хранилище заполнено.",
+        TokenError.Full => "На токене закончилось место. Удалите ненужные записи или сократите длинные поля (Настройки → Память токена).",
         TokenError.BadPhrase => "Фраза восстановления неверна.",
         TokenError.NoKey => "На этом компьютере нет ключа хранилища. Восстановите доступ по 24 словам.",
         TokenError.BadArgs => "Токен отклонил данные: слишком длинные поля?",

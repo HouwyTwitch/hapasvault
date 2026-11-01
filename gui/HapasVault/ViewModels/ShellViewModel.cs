@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 using System.Net.Http;
 using System.Windows;
 using System.Windows.Input;
@@ -55,6 +56,12 @@ public sealed partial class ShellViewModel : ObservableObject
     public AppSettings Settings { get; }
     public ThemeManager Theme { get; }
     public SnackbarViewModel Snackbar { get; } = new();
+    /// <summary>Steam Web и сессии ПК; в демо — заглушки (сеть не трогаем).</summary>
+    public Core.Steam.ISteamWeb SteamWeb => IsDemo ? _demoSteam ??= new DemoSteamWeb() : _steam ??= new Core.Steam.SteamWeb();
+    public Core.Steam.ISteamSessionStore SteamSessions => IsDemo ? _demoSessions : _sessions ??= Services.SteamSessions.Create();
+    private Core.Steam.ISteamWeb? _steam, _demoSteam;
+    private Core.Steam.ISteamSessionStore? _sessions;
+    private readonly Core.Steam.ISteamSessionStore _demoSessions = new MemorySteamSessionStore();
     public SecretClipboard Clipboard { get; } = new();
     public Radial.RadialController? Radial { get; set; }
     public GlobalHotkey? Hotkey { get; set; }
@@ -208,6 +215,11 @@ public sealed partial class ShellViewModel : ObservableObject
                     if (Page is ConnectViewModel cv) cv.Error = e.Message;
                     else Page = new ConnectViewModel(this) { Error = e.Message };
                     break;
+                case TokenError.Version:
+                    // прошивка другой версии: работать нельзя, но и пустого окна быть не должно
+                    Info = null;
+                    Page = new ConnectViewModel(this) { Error = e.Message };
+                    break;
                 case TokenError.ForeignToken:
                     Page = new ConnectViewModel(this) { Error = e.Message + " Сбросьте токен на том компьютере или подключите свой." };
                     break;
@@ -238,7 +250,8 @@ public sealed partial class ShellViewModel : ObservableObject
                     await RefreshAsync();
                     break;
                 default:
-                    Snackbar.Show(e.Message);
+                    if (Page == null) Page = new ConnectViewModel(this) { Error = e.Message };
+                    else Snackbar.Show(e.Message);
                     break;
             }
         }

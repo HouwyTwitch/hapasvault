@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * Клиентская библиотека (сторона ПК). Чистый C, без глобального состояния —
  * её же соберём в DLL для GUI с радиальным меню (C# P/Invoke).
@@ -60,6 +61,7 @@ typedef struct {
     int      paired, setup_done, unlocked;
     unsigned proto, count;
     uint32_t uptime_s;
+    uint32_t used, capacity;       /* байты хранилища; 0/0 — прошивка не сообщает */
 } pmc_info_t;
 
 /* otp_type: OTP_NONE / OTP_TOTP / OTP_STEAM (otp.h) */
@@ -114,6 +116,11 @@ int  pmc_update(pm_client *c, uint32_t id, const char *category, const char *nam
 /* Код на момент unix_time; считает токен. type/period можно не запрашивать (NULL). */
 int  pmc_otp(pm_client *c, uint32_t id, uint64_t unix_time, char *code, size_t cap,
              uint8_t *type, uint8_t *period);
+/* Steam: ключ мобильного подтверждения (HMAC-SHA1 от identity_secret, считает токен).
+ * tag — conf, details<id>, allow, cancel… (1..32 символа [a-z0-9]). */
+int  pmc_steam_conf(pm_client *c, uint32_t id, uint64_t unix_time, const char *tag, uint8_t key[20]);
+/* SteamID записи; revocation != NULL — ещё и код восстановления (как пароль: лимит и журнал). */
+int  pmc_steam_info(pm_client *c, uint32_t id, uint64_t *steamid, char *revocation, size_t cap);
 int  pmc_log(pm_client *c, pmc_log_cb cb, void *ctx);
 int  pmc_backup(pm_client *c, uint8_t *out, size_t cap, size_t *len);
 int  pmc_factory_reset(pm_client *c);

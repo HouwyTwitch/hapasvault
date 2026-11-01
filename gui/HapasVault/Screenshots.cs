@@ -1,5 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using HapasVault.Controls;
@@ -128,6 +130,22 @@ internal static class Screenshots
             return Task.CompletedTask;
         });
 
+        // подтверждения Steam: демо-Steam, ключи — от (демо-)токена; принять одно, список обновился
+        await Shot("11b-steam", async () =>
+        {
+            shell.Dialog?.Close(false);
+            await Settle();
+            var vault = vaultShell!.Vault;
+            vault.Selected = vault.Groups[1].Items[0];
+            if (vault.Detail?.HasSteamConfirmations != true) throw new InvalidOperationException("у Steam нет подтверждений");
+            _ = vault.Detail.OpenSteamCommand.ExecuteAsync(null);
+            for (int i = 0; i < 50 && (shell.Dialog is not SteamDialogViewModel d || d.IsLoading); i++) await Task.Delay(100);
+            var steam = (SteamDialogViewModel)shell.Dialog!;
+            if (steam.Error != null || steam.Items.Count != 3) throw new InvalidOperationException($"подтверждения: {steam.Error} ({steam.Items.Count})");
+            await steam.Items[2].AcceptCommand.ExecuteAsync(null);
+            if (steam.Items.Count != 2) throw new InvalidOperationException("подтверждение не ушло");
+        });
+
         await Shot("12-confirm", () =>
         {
             shell.Dialog?.Close(false);
@@ -144,6 +162,22 @@ internal static class Screenshots
         });
 
         await Shot("14-settings", () => { vaultShell!.Section = Section.Settings; return Task.CompletedTask; });
+
+        // память токена: показатель есть и посчитан
+        await Shot("14b-settings-storage", async () =>
+        {
+            await Settle();
+            var settings = (SettingsViewModel)vaultShell!.Current!;
+            if (!settings.StorageKnown || settings.StorageValue <= 0 || !settings.StorageHint.Contains("поместится"))
+                throw new InvalidOperationException("память токена не показана: " + settings.StorageText);
+            if (FindText(window, "Память токена") is { } t)
+            {
+                DependencyObject? p = t;
+                while (p != null && p is not ScrollViewer) p = VisualTreeHelper.GetParent(p);
+                if (p is ScrollViewer sv)
+                    sv.ScrollToVerticalOffset(sv.VerticalOffset + t.TranslatePoint(new Point(0, 0), sv).Y - 120);
+            }
+        });
 
         await Shot("15-vault-dark", async () =>
         {
@@ -236,6 +270,17 @@ internal static class Screenshots
     }
 
     // дать отыграть анимациям и привязкам
+    private static TextBlock? FindText(DependencyObject root, string text)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is TextBlock tb && tb.Text == text) return tb;
+            if (FindText(child, text) is { } found) return found;
+        }
+        return null;
+    }
+
     private static async Task Settle()
     {
         await Task.Delay(1400);

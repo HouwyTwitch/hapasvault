@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #define PMAPI_BUILD
 #include "pmapi.h"
 #include "bip39.h"
@@ -166,6 +167,8 @@ int pmapi_info(pmapi *h, pmapi_info_t *info)
     info->proto = i.proto;
     info->count = i.count;
     info->uptime_s = i.uptime_s;
+    info->used = i.used;
+    info->capacity = i.capacity;
     return 0;
 }
 
@@ -217,6 +220,14 @@ int pmapi_update(pmapi *h, uint32_t id, const char *category, const char *name, 
 int pmapi_otp(pmapi *h, uint32_t id, uint64_t unix_time, char *code, size_t cap, uint8_t *type, uint8_t *period)
 {
     return io(h, pmc_otp(&h->c, id, unix_time, code, cap, type, period));
+}
+int pmapi_steam_conf(pmapi *h, uint32_t id, uint64_t unix_time, const char *tag, uint8_t key[20])
+{
+    return io(h, pmc_steam_conf(&h->c, id, unix_time, tag, key));
+}
+int pmapi_steam_info(pmapi *h, uint32_t id, uint64_t *steamid, char *revocation, size_t cap)
+{
+    return io(h, pmc_steam_info(&h->c, id, steamid, revocation, cap));
 }
 int pmapi_log(pmapi *h, pmapi_log_cb cb, void *ctx) { return io(h, pmc_log(&h->c, cb, ctx)); }
 

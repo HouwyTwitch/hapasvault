@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * pmtoken: главный цикл прошивки. USB CDC <-> token_handle.
  *

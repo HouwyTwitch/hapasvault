@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
@@ -251,8 +252,8 @@ int pmc_connect(pm_client *c)
 
 int pmc_info(pm_client *c, pmc_info_t *info)
 {
-    const uint8_t *d;
-    size_t n;
+    const uint8_t *d = NULL;
+    size_t n = 0;
     uint8_t cmd = CMD_INFO;
     int st = request(c, &cmd, 1, &d, &n);
     if (st != ST_OK) return st;
@@ -263,6 +264,9 @@ int pmc_info(pm_client *c, pmc_info_t *info)
     info->proto = d[1];
     info->count = (unsigned)(d[2] | d[3] << 8);
     info->uptime_s = wire_get32(d + 4);
+    /* старые прошивки этих полей не присылают */
+    info->used = n >= 16 ? wire_get32(d + 8) : 0;
+    info->capacity = n >= 16 ? wire_get32(d + 12) : 0;
     return 0;
 }
 
@@ -289,8 +293,8 @@ int pmc_setup_begin(pm_client *c, char *words, size_t cap)
     os_rng(rand_pc, 32);
     req[0] = CMD_SETUP_BEGIN;
     memcpy(req + 1, rand_pc, 32);
-    const uint8_t *d;
-    size_t n;
+    const uint8_t *d = NULL;
+    size_t n = 0;
     int st = request(c, req, sizeof req, &d, &n);
     if (st == ST_OK && n != 32) st = PMC_E_PROTO;
     if (st == ST_OK) {
@@ -371,8 +375,8 @@ static void copy_str(wire_r *r, char *dst, size_t cap, size_t len_bytes)
 
 int pmc_list(pm_client *c, pmc_list_cb cb, void *ctx)
 {
-    const uint8_t *d;
-    size_t n;
+    const uint8_t *d = NULL;
+    size_t n = 0;
     int st = request(c, (const uint8_t[]){CMD_LIST}, 1, &d, &n);
     if (st != ST_OK) return st;
     wire_r r = {d, n, 0};
@@ -393,8 +397,8 @@ int pmc_get(pm_client *c, uint32_t id, char *login, size_t login_cap,
 {
     uint8_t req[5] = {CMD_GET};
     wire_put32(req + 1, id);
-    const uint8_t *d;
-    size_t n;
+    const uint8_t *d = NULL;
+    size_t n = 0;
     int st = request(c, req, sizeof req, &d, &n);
     if (st != ST_OK) return st;
     wire_r r = {d, n, 0};
@@ -438,8 +442,8 @@ int pmc_add_otp(pm_client *c, const char *category, const char *name, const char
     int st = put_fields(&w, category, name, login, password);
     if (st == 0) {
         put_otp(&w, otp, otp_len);
-        const uint8_t *d;
-        size_t n;
+        const uint8_t *d = NULL;
+        size_t n = 0;
         st = w.err ? ST_BAD_ARGS : request(c, req, w.n, &d, &n);
         if (st == ST_OK && id_out) *id_out = n >= 4 ? wire_get32(d) : 0;
     }
@@ -480,8 +484,8 @@ int pmc_otp(pm_client *c, uint32_t id, uint64_t unix_time, char *code, size_t ca
     wire_put32(req + 1, id);
     wire_put32(req + 5, (uint32_t)unix_time);
     wire_put32(req + 9, (uint32_t)(unix_time >> 32));
-    const uint8_t *d;
-    size_t n;
+    const uint8_t *d = NULL;
+    size_t n = 0;
     int st = request(c, req, sizeof req, &d, &n);
     if (st != ST_OK) return st;
     wire_r r = {d, n, 0};
@@ -495,6 +499,47 @@ int pmc_otp(pm_client *c, uint32_t id, uint64_t unix_time, char *code, size_t ca
     return 0;
 }
 
+int pmc_steam_conf(pm_client *c, uint32_t id, uint64_t unix_time, const char *tag, uint8_t key[20])
+{
+    size_t tl = strlen(tag);
+    if (!pm_steam_tag_ok((const uint8_t *)tag, tl)) return ST_BAD_ARGS;
+    uint8_t req[14 + STEAM_TAG_MAX] = {CMD_STEAM_CONF};
+    wire_put32(req + 1, id);
+    wire_put32(req + 5, (uint32_t)unix_time);
+    wire_put32(req + 9, (uint32_t)(unix_time >> 32));
+    req[13] = (uint8_t)tl;
+    memcpy(req + 14, tag, tl);
+    const uint8_t *d = NULL;
+    size_t n = 0;
+    int st = request(c, req, 14 + tl, &d, &n);
+    if (st != ST_OK) return st;
+    if (n != STEAM_CONF_KEY) return PMC_E_PROTO;
+    memcpy(key, d, STEAM_CONF_KEY);
+    crypto_wipe(c->plain, sizeof c->plain);
+    return 0;
+}
+
+int pmc_steam_info(pm_client *c, uint32_t id, uint64_t *steamid, char *revocation, size_t cap)
+{
+    uint8_t req[6] = {CMD_STEAM_INFO};
+    wire_put32(req + 1, id);
+    req[5] = revocation ? 1 : 0;
+    const uint8_t *d = NULL;
+    size_t n = 0;
+    int st = request(c, req, sizeof req, &d, &n);
+    if (st != ST_OK) return st;
+    wire_r r = {d, n, 0};
+    uint64_t sid = wire_u64(&r);
+    if (revocation) {
+        if (cap == 0) return PMC_E_BUF;
+        copy_str(&r, revocation, cap, 1);
+    }
+    crypto_wipe(c->plain, sizeof c->plain);
+    if (r.err) return PMC_E_PROTO;
+    *steamid = sid;
+    return 0;
+}
+
 int pmc_delete(pm_client *c, uint32_t id)
 {
     uint8_t req[5] = {CMD_DELETE};
@@ -504,8 +549,8 @@ int pmc_delete(pm_client *c, uint32_t id)
 
 int pmc_log(pm_client *c, pmc_log_cb cb, void *ctx)
 {
-    const uint8_t *d;
-    size_t n;
+    const uint8_t *d = NULL;
+    size_t n = 0;
     int st = request(c, (const uint8_t[]){CMD_LOG}, 1, &d, &n);
     if (st != ST_OK) return st;
     wire_r r = {d, n, 0};
@@ -521,8 +566,8 @@ int pmc_log(pm_client *c, pmc_log_cb cb, void *ctx)
 
 int pmc_backup(pm_client *c, uint8_t *out, size_t cap, size_t *len)
 {
-    const uint8_t *d;
-    size_t n;
+    const uint8_t *d = NULL;
+    size_t n = 0;
     int st = request(c, (const uint8_t[]){CMD_BACKUP}, 1, &d, &n);
     if (st != ST_OK) return st;
     if (n > cap) return PMC_E_BUF;

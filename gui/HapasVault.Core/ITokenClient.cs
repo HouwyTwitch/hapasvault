@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 namespace HapasVault.Core;
 
 /// <summary>Операции с токеном. Реализации: TokenClient (pmapi) и демо-клиент GUI.</summary>
@@ -31,6 +32,10 @@ public interface ITokenClient : IDisposable
     Task DeleteAsync(uint id);
     /// <summary>Одноразовый код: считает токен по времени ПК.</summary>
     Task<OtpCode> GetOtpAsync(uint id, DateTimeOffset? at = null);
+    /// <summary>Steam: ключ мобильного подтверждения (HMAC от identity_secret считает токен).</summary>
+    Task<byte[]> GetSteamConfirmationKeyAsync(uint id, long unixTime, string tag);
+    /// <summary>Steam: SteamID записи; код восстановления — только по явному запросу.</summary>
+    Task<SteamInfo> GetSteamInfoAsync(uint id, bool revocationCode = false);
     Task<IReadOnlyList<LogRecord>> GetLogAsync();
     Task<byte[]> BackupAsync();
     Task FactoryResetAsync();

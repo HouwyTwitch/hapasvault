@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * SHA-1, SHA-256 и HMAC — для TOTP/Steam Guard (RFC 2104, 6238) и BIP39.
  * SHA-1 здесь только внутри HMAC для кодов OTP: так требуют сервисы,

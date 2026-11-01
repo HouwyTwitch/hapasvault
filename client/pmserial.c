@@ -1,6 +1,8 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
+#  include <devpropdef.h>
 #  include <setupapi.h>
 #  include <devguid.h>
 #else
@@ -16,13 +18,44 @@
 
 #include "pmserial.h"
 #include "framer.h"
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+int pm_serial_name_ok(const char *name)
+{
+    while (*name && isspace((unsigned char)*name)) name++;
+    size_t n = strlen(name);
+    while (n && isspace((unsigned char)name[n - 1])) n--;
+    const char *want = PM_USB_PRODUCT;
+    if (n != strlen(want)) return 0;
+    for (size_t i = 0; i < n; i++)
+        if (tolower((unsigned char)name[i]) != want[i]) return 0;
+    return 1;
+}
+
 #ifdef _WIN32
 
 /* ---------------- Windows ---------------- */
+
+/* DEVPKEY_Device_BusReportedDeviceDesc: строка, которую сообщило само USB-устройство */
+static const DEVPROPKEY bus_reported_desc = {
+    {0x540b947e, 0x8b40, 0x45bc, {0xa8, 0xa2, 0x6a, 0x0b, 0x89, 0x4c, 0xbd, 0xa2}}, 4};
+
+/* 1 — имя не наше; 0 — наше или Windows его не сообщает */
+static int foreign_name(HDEVINFO set, SP_DEVINFO_DATA *dev)
+{
+    wchar_t desc[128];
+    DEVPROPTYPE type = 0;
+    if (!SetupDiGetDevicePropertyW(set, dev, &bus_reported_desc, &type, (BYTE *)desc, sizeof desc - sizeof desc[0], NULL, 0) ||
+        type != DEVPROP_TYPE_STRING)
+        return 0;
+    desc[sizeof desc / sizeof desc[0] - 1] = 0;
+    char utf8[256];
+    if (WideCharToMultiByte(CP_UTF8, 0, desc, -1, utf8, sizeof utf8, NULL, NULL) <= 0) return 1;
+    return !pm_serial_name_ok(utf8);
+}
 
 typedef struct {
     HANDLE h;
@@ -47,7 +80,7 @@ int pm_serial_find(char *path, size_t cap)
         int match = 0;
         for (wchar_t *p = ids; *p; p += wcslen(p) + 1)        /* REG_MULTI_SZ */
             if (wcsstr(_wcsupr(p), want)) match = 1;
-        if (!match) continue;
+        if (!match || foreign_name(set, &dev)) continue;
         HKEY key = SetupDiOpenDevRegKey(set, &dev, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_READ);
         if (key == INVALID_HANDLE_VALUE) continue;
         wchar_t name[32];
@@ -139,6 +172,25 @@ typedef struct {
     int timeout;
 } serial_posix;
 
+/* 1 — имя не наше: смотрим строку интерфейса и продукта, как их сообщило устройство */
+static int foreign_name(const char *root, const char *tty)
+{
+    static const char *const files[] = {"device/interface", "device/../product"};
+    int seen = 0;
+    for (size_t i = 0; i < 2; i++) {
+        char p[512], buf[128];
+        snprintf(p, sizeof p, "%s/%s/%s", root, tty, files[i]);
+        FILE *f = fopen(p, "r");
+        if (!f) continue;
+        int ok = fgets(buf, sizeof buf, f) != NULL;
+        fclose(f);
+        if (!ok) continue;
+        if (pm_serial_name_ok(buf)) return 0;
+        seen = 1;
+    }
+    return seen;    /* имена есть, но не наши; нет ни одного — решает VID/PID */
+}
+
 static unsigned read_hex(const char *path)
 {
     FILE *f = fopen(path, "r");
@@ -149,21 +201,23 @@ static unsigned read_hex(const char *path)
     return v;
 }
 
-int pm_serial_find(char *path, size_t cap)
+int pm_serial_find(char *path, size_t cap) { return pm_serial_find_in("/sys/class/tty", path, cap); }
+
+int pm_serial_find_in(const char *root, char *path, size_t cap)
 {
-    /* /sys/class/tty/ttyACMn/device — интерфейс USB, родитель — устройство с idVendor */
-    DIR *d = opendir("/sys/class/tty");
+    /* <root>/ttyACMn/device — интерфейс USB, родитель — устройство с idVendor */
+    DIR *d = opendir(root);
     if (!d) return 0;
     int found = 0;
     struct dirent *e;
     while (!found && (e = readdir(d)) != NULL) {
         if (strncmp(e->d_name, "ttyACM", 6) != 0) continue;
         char p[512];
-        snprintf(p, sizeof p, "/sys/class/tty/%s/device/../idVendor", e->d_name);
+        snprintf(p, sizeof p, "%s/%s/device/../idVendor", root, e->d_name);
         unsigned vid = read_hex(p);
-        snprintf(p, sizeof p, "/sys/class/tty/%s/device/../idProduct", e->d_name);
+        snprintf(p, sizeof p, "%s/%s/device/../idProduct", root, e->d_name);
         unsigned pid = read_hex(p);
-        if (vid == PM_USB_VID && pid == PM_USB_PID &&
+        if (vid == PM_USB_VID && pid == PM_USB_PID && !foreign_name(root, e->d_name) &&
             (size_t)snprintf(path, cap, "/dev/%s", e->d_name) < cap)
             found = 1;
     }

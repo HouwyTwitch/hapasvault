@@ -197,7 +197,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dir, "$dir/tools" | Out-Null
           Copy-Item publish/HapasVault.exe, publish/pmapi.dll $dir
           Copy-Item build/Release/pmtoken_sim.exe, build/Release/pmcli.exe, build/Release/pmhwtest.exe "$dir/tools"
-          Copy-Item README.md $dir
+          Copy-Item README.md, LICENSE $dir
           Copy-Item third_party/monocypher/LICENCE.md "$dir/LICENCE-monocypher.md"
           Copy-Item gui/THIRD_PARTY.md $dir
           Compress-Archive -Path "$dir/*" -DestinationPath "dist/$name.zip"

@@ -152,4 +152,102 @@
       </DockPanel>
     </StackPanel>
   </DataTemplate>
+
+  <!-- ===================== подтверждения Steam ===================== -->
+  <DataTemplate DataType="{x:Type vm:SteamDialogViewModel}">
+    <DockPanel Width="560" MaxHeight="640">
+      <DockPanel DockPanel.Dock="Top">
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" c:A.Icon="{StaticResource Icon.Close}" Command="{Binding CancelCommand}"
+                ToolTip="Закрыть (Esc)" />
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" c:A.Icon="{StaticResource Icon.Refresh}" Command="{Binding LoadCommand}"
+                ToolTip="Обновить" />
+        <c:MorphShape DockPanel.Dock="Left" Width="48" Height="48" Shape="Cookie9" TargetShape="Sunny" HoverMorph="True" Margin="0,0,16,0"
+                      Fill="{DynamicResource TertiaryContainer}" TextElement.Foreground="{DynamicResource OnTertiaryContainer}">
+          <c:Icon Data="{StaticResource Icon.SwapHoriz}" Width="24" Height="24" />
+        </c:MorphShape>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Style="{StaticResource Headline.Small}" Text="Подтверждения Steam" />
+          <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource OnSurfaceVariant}" Text="{Binding Entry.Name}" />
+        </StackPanel>
+      </DockPanel>
+
+      <!-- низ: код восстановления, выход, принять все -->
+      <StackPanel DockPanel.Dock="Bottom" Margin="0,16,0,0">
+        <Border CornerRadius="16" Padding="16,10" Margin="0,0,0,12" Background="{DynamicResource ErrorContainer}"
+                Visibility="{Binding Revocation, Converter={StaticResource VisibleWhen}}">
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Right" FontFamily="{StaticResource Font.Mono}" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center"
+                       Foreground="{DynamicResource OnErrorContainer}" Text="{Binding Revocation}" />
+            <TextBlock Style="{StaticResource Body.Small}" Foreground="{DynamicResource OnErrorContainer}" TextWrapping="Wrap" Margin="0,0,12,0"
+                       Text="Код восстановления отвязывает аутентификатор. Никому не сообщайте; скроется через 30 с." />
+          </DockPanel>
+        </Border>
+        <DockPanel>
+          <Button DockPanel.Dock="Right" Style="{StaticResource Button.Filled}" Content="{Binding AcceptAllText}" c:A.Icon="{StaticResource Icon.DoneAll}"
+                  Command="{Binding AcceptAllCommand}" Visibility="{Binding HasMany, Converter={StaticResource VisibleWhen}}" />
+          <StackPanel Orientation="Horizontal">
+            <Button Style="{StaticResource Button.Text}" Content="Код восстановления" Command="{Binding ShowRevocationCommand}" />
+            <Button Style="{StaticResource Button.Text}" Content="Выйти из Steam" Command="{Binding SignOutCommand}"
+                    ToolTip="Удалить сессию Steam с этого ПК (секреты останутся на токене)" />
+          </StackPanel>
+        </DockPanel>
+      </StackPanel>
+
+      <StackPanel DockPanel.Dock="Top" Margin="0,16,0,0">
+        <DockPanel Visibility="{Binding Status, Converter={StaticResource VisibleWhen}}" Margin="0,0,0,8">
+          <c:LoadingIndicator DockPanel.Dock="Left" Width="32" Height="32" Foreground="{DynamicResource Primary}" Margin="0,0,12,0" />
+          <TextBlock Style="{StaticResource Body.Medium}" VerticalAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}" Text="{Binding Status}" />
+        </DockPanel>
+        <Border CornerRadius="16" Padding="16,12" Background="{DynamicResource ErrorContainer}"
+                Visibility="{Binding Error, Converter={StaticResource VisibleWhen}}">
+          <DockPanel>
+            <c:Icon DockPanel.Dock="Left" Data="{StaticResource Icon.Error}" Width="20" Height="20" Margin="0,0,12,0" VerticalAlignment="Top"
+                    Foreground="{DynamicResource OnErrorContainer}" />
+            <TextBlock Style="{StaticResource Body.Medium}" TextWrapping="Wrap" Foreground="{DynamicResource OnErrorContainer}" Text="{Binding Error}" />
+          </DockPanel>
+        </Border>
+        <StackPanel Visibility="{Binding IsEmpty, Converter={StaticResource VisibleWhen}}" Margin="0,24,0,8" HorizontalAlignment="Center">
+          <c:Icon Data="{StaticResource Icon.CheckCircle}" Width="40" Height="40" Foreground="{DynamicResource Primary}" />
+          <TextBlock Style="{StaticResource Title.Medium}" Margin="0,12,0,0" HorizontalAlignment="Center" Text="Нечего подтверждать" />
+          <TextBlock Style="{StaticResource Body.Medium}" Margin="0,4,0,0" HorizontalAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}"
+                     Text="Новые обмены и лоты появятся здесь." />
+        </StackPanel>
+      </StackPanel>
+
+      <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,8,0,0">
+        <ItemsControl ItemsSource="{Binding Items}" Focusable="False">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border CornerRadius="24" Padding="16,14,16,12" Margin="0,0,0,8" Background="{DynamicResource SurfaceContainerHigh}" c:A.Enter="0">
+                <StackPanel>
+                  <DockPanel>
+                    <Border DockPanel.Dock="Left" Width="40" Height="40" CornerRadius="20" Margin="0,0,14,0" VerticalAlignment="Top"
+                            Background="{DynamicResource SecondaryContainer}">
+                      <c:Icon Data="{Binding IconKey, Converter={StaticResource Resource}}" Width="22" Height="22"
+                              Foreground="{DynamicResource OnSecondaryContainer}" />
+                    </Border>
+                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource Body.Small}" Foreground="{DynamicResource OnSurfaceVariant}" Text="{Binding Ago}" />
+                    <StackPanel>
+                      <TextBlock Style="{StaticResource Label.Medium}" Foreground="{DynamicResource Primary}" Text="{Binding Kind}" />
+                      <TextBlock Style="{StaticResource Title.Medium}" TextTrimming="CharacterEllipsis" Text="{Binding Headline}" />
+                      <TextBlock Style="{StaticResource Body.Medium}" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource OnSurfaceVariant}"
+                                 Text="{Binding Summary}" Visibility="{Binding HasSummary, Converter={StaticResource VisibleWhen}}" />
+                    </StackPanel>
+                  </DockPanel>
+                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                    <c:LoadingIndicator Width="32" Height="32" Margin="0,0,8,0" Foreground="{DynamicResource Primary}"
+                                        Visibility="{Binding IsBusy, Converter={StaticResource VisibleWhen}}" />
+                    <Button Style="{StaticResource Button.Text}" Content="{Binding CancelText}" Command="{Binding DeclineCommand}"
+                            IsEnabled="{Binding IsBusy, Converter={StaticResource Not}}" />
+                    <Button Style="{StaticResource Button.Tonal}" Margin="8,0,0,0" Content="{Binding AcceptText}" c:A.Icon="{StaticResource Icon.Check}"
+                            Command="{Binding AcceptCommand}" IsEnabled="{Binding IsBusy, Converter={StaticResource Not}}" />
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </DockPanel>
+  </DataTemplate>
 </ResourceDictionary>

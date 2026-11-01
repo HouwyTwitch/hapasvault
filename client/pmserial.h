@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * Транспорт настоящего токена: USB CDC (виртуальный COM-порт). Драйвер
  * встроен в Windows 10+, Linux и macOS. Кадры — как у симулятора:
@@ -15,8 +16,17 @@ typedef intptr_t pm_serial;
 #define PM_BAD_SERIAL ((pm_serial)-1)
 
 /* Найти подключённый токен. Windows: "COM5", Linux: "/dev/ttyACM0".
+ * Совпасть должны VID/PID и имя устройства (PM_USB_PRODUCT), если ОС его сообщает.
  * 1 = найден, 0 = нет. */
 int       pm_serial_find(char *path, size_t cap);
+
+#ifndef _WIN32
+/* То же по другому корню вместо /sys/class/tty (тесты). */
+int       pm_serial_find_in(const char *root, char *path, size_t cap);
+#endif
+
+/* Имя USB-устройства — наш токен? (без учёта регистра и пробелов по краям) */
+int       pm_serial_name_ok(const char *name);
 
 /* Открыть порт (сырой режим, монопольно). timeout_ms — на каждую операцию.
  * При ошибке *busy = 1, если порт занят другой программой. */

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
@@ -31,6 +32,8 @@ public sealed partial class LogViewModel(ShellViewModel shell) : ObservableObjec
         0x43 => ("Icon.Delete", "Удаление записи"),
         0x44 => ("Icon.Edit", "Изменение записи"),
         0x45 => ("Icon.ShieldLock", "Одноразовый код"),
+        0x46 => ("Icon.SwapHoriz", "Подтверждение Steam"),
+        0x47 => ("Icon.Key", "Код восстановления Steam"),
         0x51 => ("Icon.Download", "Резервная копия"),
         _ => ("Icon.Info", $"Команда 0x{cmd:X2}"),
     };
@@ -159,7 +162,25 @@ public sealed partial class SettingsViewModel : ObservableObject
             TokenText = (_shell.Token.Transport == TokenTransport.Usb ? "USB" : _shell.IsDemo ? "Демо" : "Симулятор") +
                         $" · протокол v{info.Protocol} · {Ru.Plural(info.Count, "запись", "записи", "записей")} · " +
                         $"работает {Ru.Duration(info.UptimeSeconds)}";
+        if (info == null) return;
+        StorageKnown = info.StorageKnown;
+        StorageValue = info.StorageFraction;
+        StorageWarn = info.StorageFraction >= 0.85;
+        StorageText = info.StorageKnown
+            ? $"Занято {Ru.Bytes(info.UsedBytes)} из {Ru.Bytes(info.CapacityBytes)} ({info.StorageFraction:P0})"
+            : "Прошивка токена не сообщает занятое место — обновите её";
+        StorageHint = info.StorageKnown
+            ? info.FreeBytes == 0
+                ? "Места нет: удалите ненужные записи"
+                : $"Свободно {Ru.Bytes(info.FreeBytes)} — поместится ещё примерно {Ru.Plural(info.EstimatedMoreEntries, "запись", "записи", "записей")} такого же размера"
+            : "";
     }
+
+    [ObservableProperty] private bool _storageKnown;
+    [ObservableProperty] private double _storageValue;
+    [ObservableProperty] private bool _storageWarn;
+    [ObservableProperty] private string _storageText = "";
+    [ObservableProperty] private string _storageHint = "";
 
     private void ApplyTheme()
     {

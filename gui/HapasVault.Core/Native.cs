@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 using System.Runtime.InteropServices;
 
 // pmapi ищется только рядом с программой (и системные DLL — в System32):
@@ -16,6 +17,7 @@ internal static unsafe partial class Native
     {
         public int Paired, SetupDone, Unlocked;
         public uint Proto, Count, UptimeS;
+        public uint Used, Capacity;
     }
 
     [LibraryImport(Lib)] internal static partial int pmapi_version();
@@ -63,6 +65,10 @@ internal static unsafe partial class Native
                                              int otpMode, byte* otp, nuint otpLen);
     [LibraryImport(Lib)]
     internal static partial int pmapi_otp(nint h, uint id, ulong unixTime, byte* code, nuint cap, out byte type, out byte period);
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int pmapi_steam_conf(nint h, uint id, ulong unixTime, string tag, byte* key);
+    [LibraryImport(Lib)]
+    internal static partial int pmapi_steam_info(nint h, uint id, out ulong steamId, byte* revocation, nuint cap);
     [LibraryImport(Lib)]
     internal static partial int pmapi_log(nint h, delegate* unmanaged<nint, uint, byte, byte, uint, void> cb, nint ctx);
     [LibraryImport(Lib)] internal static partial int pmapi_backup(nint h, byte* output, nuint cap, out nuint len);

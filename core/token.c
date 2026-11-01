@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "token.h"
 #include "hal.h"
 #include "kdf.h"
@@ -27,6 +28,8 @@ static uint64_t g_get_times[TOKEN_RATE_N];
 static unsigned g_get_pos;
 static uint64_t g_otp_times[TOKEN_OTP_RATE_N];
 static unsigned g_otp_pos;
+static uint64_t g_steam_times[TOKEN_STEAM_RATE_N];
+static unsigned g_steam_pos;
 static uint64_t g_backoff_until;
 
 /* Часов у токена нет: время для OTP присылает ПК. Чтобы ПК не мог заранее
@@ -269,6 +272,9 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
         wire_put_u8(&w, PM_PROTO_VERSION);
         wire_put_u16(&w, g_unlocked ? v_count() : 0);
         wire_put_u32(&w, (uint32_t)(hal_millis() / 1000u));
+        /* занято / всего: сколько ещё записей поместится — видно в настройках */
+        wire_put_u32(&w, g_unlocked ? (uint32_t)g_plain_len : 0u);
+        wire_put_u32(&w, STORE_PLAIN_MAX);
         break;
     }
 
@@ -507,6 +513,54 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
         wire_put_u8(&w, (uint8_t)cl);
         wire_put_bytes(&w, code, (size_t)cl);
         crypto_wipe(code, sizeof code);
+        break;
+    }
+
+    case CMD_STEAM_CONF: {
+        uint32_t id = wire_u32(&r);
+        uint64_t t = wire_u64(&r);
+        size_t tl = wire_u8(&r);
+        const uint8_t *tag = wire_bytes(&r, tl);
+        if (r.err || r.n || !pm_steam_tag_ok(tag, tl)) { st = ST_BAD_ARGS; break; }
+        if (!g_unlocked) { st = ST_LOCKED; break; }
+        /* журнал — только одобрения и отказы: список запрашивается часто */
+        int action = pm_steam_tag_is_action(tag, tl);
+        log_id = id; do_log = action;
+        long off = v_find(id);
+        if (off < 0) { st = ST_NOT_FOUND; break; }
+        const uint8_t *otp = v_entry_otp((size_t)off);
+        if (!otp[0] || otp[1] != OTP_STEAM_MOBILE) { st = ST_NO_OTP; break; }
+        if (!otp_time_ok(t)) { st = ST_BAD_TIME; break; }
+        if (!window_ok(g_steam_times, TOKEN_STEAM_RATE_N, &g_steam_pos)) { st = ST_RATE_LIMIT; break; }
+        uint8_t key[STEAM_CONF_KEY];
+        if (pm_steam_conf_key(otp + 1, otp[0], t, tag, tl, key) != 0) { st = ST_FLASH; break; }
+        wire_put_bytes(&w, key, sizeof key);
+        crypto_wipe(key, sizeof key);
+        break;
+    }
+
+    case CMD_STEAM_INFO: {
+        uint32_t id = wire_u32(&r);
+        uint8_t flags = wire_u8(&r);
+        if (r.err || r.n || flags > 1) { st = ST_BAD_ARGS; break; }
+        if (!g_unlocked) { st = ST_LOCKED; break; }
+        log_id = id; do_log = flags & 1;
+        long off = v_find(id);
+        if (off < 0) { st = ST_NOT_FOUND; break; }
+        const uint8_t *otp = v_entry_otp((size_t)off);
+        uint64_t sid;
+        const uint8_t *rev;
+        size_t rl;
+        if (!otp[0] || pm_steam_parts(otp + 1, otp[0], NULL, NULL, NULL, NULL, &sid, &rev, &rl) != 0) {
+            st = ST_NO_OTP;
+            break;
+        }
+        /* код восстановления отключает Steam Guard — выдаётся как пароль, с лимитом */
+        if ((flags & 1) && !rate_ok()) { st = ST_RATE_LIMIT; break; }
+        wire_put_u64(&w, sid);
+        if (!(flags & 1)) rl = 0;
+        wire_put_u8(&w, (uint8_t)rl);
+        wire_put_bytes(&w, rev, rl);
         break;
     }
 

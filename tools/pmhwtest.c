@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * Проверка настоящего токена: весь протокол по USB с замером времени.
  *
@@ -168,6 +169,23 @@ int main(int argc, char **argv)
     start(); step("OTP Steam", pmc_otp(&g_c, id_steam, 1700000000, code, sizeof code, NULL, NULL), 0);
     check("код Steam = T7WDC", !strcmp(code, "T7WDC"));
 
+    /* подтверждения Steam: identity_secret на токене, ключ — HMAC-SHA1 на токене */
+    static const uint8_t mobile[] = {OTP_STEAM_MOBILE, PM_SHA1, 5, 30,
+        22, 's','t','e','a','m','-','t','e','s','t','-','s','e','c','r','e','t','-','1','2','3','4',
+        24, 's','t','e','a','m','-','i','d','e','n','t','i','t','y','-','s','e','c','r','e','t','-','0','1',
+        0xBA, 0x56, 0x00, 0x00, 0x01, 0x00, 0x10, 0x01,       /* 76561197960287930 */
+        6, 'R','1','2','3','4','5'};
+    uint32_t id_mobile = 0;
+    uint8_t key[20], ref_key[20];
+    start(); step("ADD + Steam с подтверждениями", pmc_add_otp(&g_c, "", "Steam+", "", "x", mobile, sizeof mobile, &id_mobile), 0);
+    start(); step("ключ подтверждения (allow)", pmc_steam_conf(&g_c, id_mobile, 1700000000, "allow", key), 0);
+    pm_steam_conf_key(mobile, sizeof mobile, 1700000000, (const uint8_t *)"allow", 5, ref_key);
+    check("ключ совпал с эталоном", !memcmp(key, ref_key, 20));
+    uint64_t sid = 0;
+    char rev[32];
+    start(); step("SteamID и код восстановления", pmc_steam_info(&g_c, id_mobile, &sid, rev, sizeof rev), 0);
+    check("SteamID и код верны", sid == 76561197960287930ull && !strcmp(rev, "R12345"));
+
     char login[300], pw[PM_MAX_PASSWORD + 1];
     start(); step("GET (расшифровка на токене)", pmc_get(&g_c, id, login, sizeof login, pw, sizeof pw), 0);
     check("пароль цел", !strcmp(pw, big) && !strcmp(login, "user"));
@@ -176,7 +194,7 @@ int main(int argc, char **argv)
     check("изменение на месте", !strcmp(login, "user2") && !strcmp(pw, "short"));
     g_items = 0;
     start(); step("LIST", pmc_list(&g_c, count_cb, NULL), 0);
-    check("3 записи", g_items == 3);
+    check("4 записи", g_items == 4);
     start(); step("DELETE", pmc_delete(&g_c, id_totp), 0);
 
     static uint8_t backup[PM_MAX_FRAME];
@@ -196,7 +214,7 @@ int main(int argc, char **argv)
     check("после отключения хранилище закрыто", info.setup_done && !info.unlocked);
     start(); step("UNLOCK после переподключения", pmc_unlock(&g_c, "hw-test-pw"), 0);
     pmc_info(&g_c, &info);
-    check("записи на месте (flash)", info.count == 2);
+    check("записи на месте (flash)", info.count == 3);
 
     start(); step("FACTORY_RESET (токен снова чистый)", pmc_factory_reset(&g_c), 0);
     close_transport();

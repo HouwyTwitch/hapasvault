@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 using HapasVault.Core;
 
 namespace HapasVault.Services;
@@ -43,13 +44,27 @@ public sealed class DemoTokenClient : ITokenClient
         Seed("Соцсети", "ВКонтакте", "ivan.petrov");
         Seed("", "Wi-Fi дома", "HomeNet-5G");
         Seed("Игры", "Steam", "ivan_gamer");
-        _otp[_next - 1] = new OtpSecret(OtpKind.Steam, "demo-steam-shared-key"u8.ToArray());
+        _otp[_next - 1] = new OtpSecret(OtpKind.Steam, "demo-steam-shared-key"u8.ToArray())
+        {
+            Mobile = new SteamMobile("demo-steam-identity-key"u8.ToArray(), 76561197960287930, "R12345"),
+        };
         AddLog(0x30, 0, 0, 2500);
         AddLog(0x41, 0, 3, 1900);
         AddLog(0x42, 0, 11, 1300);
         AddLog(0x30, 5, 0, 420);
         AddLog(0x30, 0, 0, 400);
         AddLog(0x41, 0, 6, 120);
+    }
+
+    // как формат записи на токене (core/token.c): id, три строки, пароль, блок OTP
+    private uint UsedBytes()
+    {
+        static int U(string s) => System.Text.Encoding.UTF8.GetByteCount(s);
+        long n = 6;
+        foreach (var (id, it) in _items)
+            n += 4 + 1 + U(it.Cat) + 1 + U(it.Name) + 1 + U(it.Login) + 2 + U(it.Pw) + 1 +
+                 (_otp.TryGetValue(id, out var o) ? o.ToBlob().Length : 0);
+        return (uint)n;
     }
 
     private void Seed(string cat, string name, string login) =>
@@ -89,7 +104,7 @@ public sealed class DemoTokenClient : ITokenClient
     public async Task<TokenInfo> GetInfoAsync()
     {
         await Delay(40);
-        return new TokenInfo(IsPaired, _setup, _unlocked, 1, (uint)_items.Count, Uptime);
+        return new TokenInfo(IsPaired, _setup, _unlocked, 3, (uint)_items.Count, Uptime, _unlocked ? UsedBytes() : 0, 32768);
     }
 
     public async Task<string[]> BeginSetupAsync()
@@ -131,7 +146,7 @@ public sealed class DemoTokenClient : ITokenClient
         await Delay(80);
         RequireOpen();
         return _items.Select(kv => new VaultItem(kv.Key, kv.Value.Cat, kv.Value.Name,
-            _otp.TryGetValue(kv.Key, out var o) ? o.Kind : OtpKind.None)).ToList();
+            _otp.TryGetValue(kv.Key, out var o) ? o.Kind : OtpKind.None, o?.Mobile != null)).ToList();
     }
 
     public async Task<Credential> GetAsync(uint id)
@@ -181,6 +196,29 @@ public sealed class DemoTokenClient : ITokenClient
         AddLog(0x45, 0, id);
         long next = (when.ToUnixTimeSeconds() / o.Period + 1) * o.Period;
         return new OtpCode(o.Code(when), o.Kind, o.Period, DateTimeOffset.FromUnixTimeSeconds(next));
+    }
+
+    private SteamMobile Steam(uint id) =>
+        _otp.TryGetValue(id, out var o) && o.Mobile is { } m
+            ? m
+            : throw new TokenException(12, TokenError.NoOtp, TokenException.Describe(TokenError.NoOtp));
+
+    public async Task<byte[]> GetSteamConfirmationKeyAsync(uint id, long unixTime, string tag)
+    {
+        await Delay(40);
+        RequireOpen();
+        var m = Steam(id);
+        if (tag is "allow" or "cancel" or "accept" or "reject") AddLog(0x46, 0, id);
+        return OtpSecret.SteamConfirmationKey(m.IdentitySecret, unixTime, tag);
+    }
+
+    public async Task<SteamInfo> GetSteamInfoAsync(uint id, bool revocationCode = false)
+    {
+        await Delay(40);
+        RequireOpen();
+        var m = Steam(id);
+        if (revocationCode) AddLog(0x47, 0, id);
+        return new SteamInfo(m.SteamId, revocationCode ? m.RevocationCode ?? "" : null);
     }
 
     public async Task DeleteAsync(uint id)

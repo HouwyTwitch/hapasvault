@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
@@ -13,6 +14,17 @@ public enum OtpAlgorithm : byte { Sha1 = 1, Sha256 = 2 }
 public enum OtpChange { Remove = 0, Set = 1, Keep = 2 }
 
 public sealed record OtpCode(string Code, OtpKind Kind, int Period, DateTimeOffset ValidUntil);
+
+/// <summary>
+/// Данные мобильного аутентификатора Steam сверх кода входа. identity_secret и код
+/// восстановления уходят на токен и наружу не выдаются (код — только по запросу, как пароль).
+/// DeviceId и RefreshToken на токен не попадают: это данные сессии ПК (импорт из maFile).
+/// </summary>
+public sealed record SteamMobile(byte[] IdentitySecret, ulong SteamId = 0, string? RevocationCode = null)
+{
+    public string? DeviceId { get; init; }
+    public string? RefreshToken { get; init; }
+}
 
 /// <summary>
 /// Параметры одноразовых кодов, как их понимает токен (core/otp.h):
@@ -39,6 +51,8 @@ public sealed class OtpSecret
 
     public OtpKind Kind { get; }
     public byte[] Secret { get; }
+    /// <summary>Steam: identity_secret и прочее для подтверждений обменов и площадки.</summary>
+    public SteamMobile? Mobile { get; init; }
     public OtpAlgorithm Algorithm { get; }
     public int Digits { get; }
     public int Period { get; }
@@ -47,11 +61,12 @@ public sealed class OtpSecret
     public string? Account { get; init; }
 
     public string Describe() => Kind == OtpKind.Steam
-        ? "Steam Guard · 5 символов · 30 с"
+        ? Mobile != null ? "Steam Guard · код входа и подтверждения" : "Steam Guard · 5 символов · 30 с"
         : $"TOTP · {(Algorithm == OtpAlgorithm.Sha1 ? "SHA1" : "SHA256")} · {Digits} цифр · {Period} с";
 
     public byte[] ToBlob()
     {
+        if (Kind == OtpKind.Steam && Mobile is { } m) return SteamBlob(m);
         var b = new byte[4 + Secret.Length];
         b[0] = (byte)Kind;
         b[1] = (byte)Algorithm;
@@ -59,6 +74,33 @@ public sealed class OtpSecret
         b[3] = (byte)Period;
         Secret.CopyTo(b, 4);
         return b;
+    }
+
+    // core/otp.h, OTP_STEAM_MOBILE: [3][1][5][30][n][shared][m][identity][u64 steamid][r][revocation]
+    private byte[] SteamBlob(SteamMobile m)
+    {
+        if (m.IdentitySecret.Length is < MinSecret or > MaxSecret) throw new FormatException("identity_secret должен быть 10–64 байта.");
+        string rev = m.RevocationCode ?? "";
+        if (rev.Length > 16 || rev.Any(c => c is < '!' or > '~')) throw new FormatException("Код восстановления Steam — до 16 латинских символов.");
+        var b = new List<byte> { 3, 1, 5, 30, (byte)Secret.Length };
+        b.AddRange(Secret);
+        b.Add((byte)m.IdentitySecret.Length);
+        b.AddRange(m.IdentitySecret);
+        Span<byte> sid = stackalloc byte[8];
+        BinaryPrimitives.WriteUInt64LittleEndian(sid, m.SteamId);
+        b.AddRange(sid.ToArray());
+        b.Add((byte)rev.Length);
+        b.AddRange(Encoding.ASCII.GetBytes(rev));
+        return b.ToArray();
+    }
+
+    /// <summary>Эталонный ключ подтверждения Steam (тесты, демо): HMAC-SHA1(identity, u64 be time || tag).</summary>
+    public static byte[] SteamConfirmationKey(byte[] identitySecret, long time, string tag)
+    {
+        var msg = new byte[8 + Encoding.ASCII.GetByteCount(tag)];
+        BinaryPrimitives.WriteInt64BigEndian(msg, time);
+        Encoding.ASCII.GetBytes(tag, msg.AsSpan(8));
+        return HMACSHA1.HashData(identitySecret, msg);
     }
 
     /// <summary>Эталонный расчёт кода (демо и проверка токена в тестах).</summary>
@@ -104,6 +146,7 @@ public sealed class OtpSecret
                     {
                         Account = doc.RootElement.TryGetProperty("account_name", out var an) ? an.GetString() : null,
                         Issuer = "Steam",
+                        Mobile = MaFileMobile(doc.RootElement),
                     };
             }
             catch (JsonException)
@@ -121,6 +164,33 @@ public sealed class OtpSecret
         if (kind == OtpKind.Steam && LooksBase64(s))
             return new OtpSecret(OtpKind.Steam, Convert.FromBase64String(s)) { Issuer = "Steam" };
         return new OtpSecret(kind == OtpKind.None ? OtpKind.Totp : kind, Base32(s));
+    }
+
+    /// <summary>identity_secret, SteamID, код восстановления и сессия из maFile (SDA).</summary>
+    private static SteamMobile? MaFileMobile(JsonElement root)
+    {
+        if (!root.TryGetProperty("identity_secret", out var id) || id.GetString() is not { Length: > 0 } idB64) return null;
+        JsonElement session = root.TryGetProperty("Session", out var se) && se.ValueKind == JsonValueKind.Object ? se : default;
+        ulong steamId = 0;
+        foreach (var (obj, name) in new[] { (root, "steamid"), (root, "steam_id"), (session, "SteamID") })
+            if (obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(name, out var v) && steamId == 0)
+                steamId = v.ValueKind == JsonValueKind.Number ? v.GetUInt64() : ulong.TryParse(v.GetString(), out var x) ? x : 0;
+        string? Str(JsonElement o, string n) =>
+            o.ValueKind == JsonValueKind.Object && o.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        byte[] identity;
+        try
+        {
+            identity = Convert.FromBase64String(idB64);
+        }
+        catch (FormatException)
+        {
+            throw new FormatException("identity_secret в maFile повреждён.");
+        }
+        return new SteamMobile(identity, steamId, Str(root, "revocation_code"))
+        {
+            DeviceId = Str(root, "device_id"),
+            RefreshToken = Str(session, "RefreshToken"),
+        };
     }
 
     private static OtpSecret ParseUri(string s)

@@ -232,6 +232,11 @@
                               Visibility="{Binding IsOtpShown, Converter={StaticResource VisibleWhen}}" />
             </StackPanel>
           </Border>
+          <!-- подтверждения Steam: identity_secret на токене -->
+          <Button Style="{StaticResource Button.Tonal}" Margin="0,12,0,0" HorizontalAlignment="Stretch" Height="52"
+                  Content="Подтверждения Steam" c:A.Icon="{StaticResource Icon.SwapHoriz}" Command="{Binding OpenSteamCommand}"
+                  ToolTip="Обмены, торговая площадка и другие мобильные подтверждения: ключи считает токен"
+                  Visibility="{Binding HasSteamConfirmations, Converter={StaticResource VisibleWhen}}" />
           <DockPanel Margin="4,16,4,0">
             <c:Icon DockPanel.Dock="Left" Data="{StaticResource Icon.ShieldLock}" Width="18" Height="18" Margin="0,0,10,0" VerticalAlignment="Top"
                     Foreground="{DynamicResource OnSurfaceVariant}" />
@@ -502,6 +507,27 @@
         <!-- токен -->
         <TextBlock Style="{StaticResource Section}" Text="Токен" />
         <Border Style="{StaticResource SettingRow}" CornerRadius="28,28,6,6">
+          <StackPanel>
+            <TextBlock Style="{StaticResource SettingTitle}" Text="Память токена" />
+            <TextBlock Style="{StaticResource SettingHint}" Text="{Binding StorageText}" />
+            <c:WavyProgress Margin="0,12,0,0" Value="{Binding StorageValue}" Track="{DynamicResource SurfaceContainerHighest}"
+                            Visibility="{Binding StorageKnown, Converter={StaticResource VisibleWhen}}">
+              <c:WavyProgress.Style>
+                <Style TargetType="c:WavyProgress">
+                  <Setter Property="Foreground" Value="{DynamicResource Primary}" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding StorageWarn}" Value="True">
+                      <Setter Property="Foreground" Value="{DynamicResource Error}" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </c:WavyProgress.Style>
+            </c:WavyProgress>
+            <TextBlock Style="{StaticResource SettingHint}" Margin="0,8,0,0" Text="{Binding StorageHint}"
+                       Visibility="{Binding StorageKnown, Converter={StaticResource VisibleWhen}}" />
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource SettingRow}">
           <DockPanel>
             <Button DockPanel.Dock="Right" Style="{StaticResource Button.Tonal}" Content="Сохранить копию" c:A.Icon="{StaticResource Icon.Download}"
                     VerticalAlignment="Center" Command="{Binding BackupCommand}" />
@@ -524,7 +550,7 @@
               </StackPanel>
               <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0"
                           Visibility="{Binding ShowPort, Converter={StaticResource VisibleWhen}}">
-                <TextBox Style="{StaticResource TextField.Mono}" Width="140" c:A.Label="Порт симулятора" c:A.Error="{Binding PortError}"
+                <TextBox Style="{StaticResource TextField.Mono}" Width="140" c:A.Label="Порт" c:A.Error="{Binding PortError}"
                          Text="{Binding PortText, UpdateSourceTrigger=PropertyChanged}" />
                 <Button Style="{StaticResource Button.Outlined}" Margin="12,8,0,0" VerticalAlignment="Top" Content="Применить" Command="{Binding ApplyPortCommand}" />
               </StackPanel>
@@ -586,7 +612,7 @@
           </c:MorphShape>
           <TextBlock Style="{StaticResource Body.Medium}" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}">
             <Run Text="HapasVault" FontWeight="SemiBold" /><Run Text=" " /><Run Text="{Binding Version, Mode=OneWay}" />
-            <Run Text=" · Material 3 Expressive · шрифт Roboto, иконки Material Symbols" />
+            <Run Text=" · свободное ПО, GNU GPL v3 · шрифт Roboto, иконки Material Symbols" />
           </TextBlock>
         </StackPanel>
       </StackPanel>

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * Протокол обмена ПК <-> токен.
  *
@@ -24,7 +25,7 @@
 #ifndef PM_PROTO_H
 #define PM_PROTO_H
 
-#define PM_PROTO_VERSION   2   /* 2: OTP, UPDATE, тип OTP в LIST */
+#define PM_PROTO_VERSION   3   /* 3: подтверждения Steam; 2: OTP, UPDATE, тип OTP в LIST */
 
 /* Типы кадров */
 #define FR_PAIR    0x01
@@ -40,7 +41,8 @@
 #define FE_DECRYPT        5   /* сессия сброшена */
 
 /* Команды (внутри FR_DATA) */
-#define CMD_INFO          0x10  /* -> [u8 flags][u8 proto][u16 count][u32 uptime_s] */
+#define CMD_INFO          0x10  /* -> [u8 flags][u8 proto][u16 count][u32 uptime_s][u32 used][u32 capacity]
+                                         used/capacity — байты открытого хранилища (used = 0, если закрыто) */
 #define CMD_SETUP_BEGIN   0x20  /* [rand_pc 32] -> [rand_token 32] */
 #define CMD_SETUP_COMMIT  0x21  /* [pw_hash 32] -> ok (хранилище создано и открыто) */
 #define CMD_RESTORE       0x22  /* [k_token 32][k_pc 32][pw_hash 32][backup...] -> ok */
@@ -52,6 +54,8 @@
 #define CMD_DELETE        0x43  /* [u32 id] -> ok */
 #define CMD_UPDATE        0x44  /* [u32 id][str cat][str name][str login][pw password][u8 mode][otp если mode=1] -> ok */
 #define CMD_OTP           0x45  /* [u32 id][u64 unix_time] -> [u8 type][u8 period][str code] */
+#define CMD_STEAM_CONF    0x46  /* [u32 id][u64 unix_time][u8 n][tag n] -> [key 20] (HMAC identity_secret) */
+#define CMD_STEAM_INFO    0x47  /* [u32 id][u8 flags] -> [u64 steamid][u8 n][revocation n, если flags&1] */
 #define CMD_LOG           0x50  /* -> [u8 n] n * {u32 uptime_s, u8 cmd, u8 status, u32 id} */
 #define CMD_BACKUP        0x51  /* -> зашифрованный блоб хранилища как есть */
 #define CMD_FACTORY_RESET 0x60  /* (только открытое) -> ok, стирает всё, включая сопряжение */
@@ -78,11 +82,13 @@
 #define ST_BAD_TIME       0x0D  /* время ПК убежало вперёд относительно часов токена */
 
 /* Ограничения */
-/* USB-идентификаторы прошивки. 1209:0001 — тестовый PID pid.codes (только для
- * разработки); для выпуска плат получите свой PID на pid.codes (бесплатно для
- * открытого железа) и поменяйте здесь — клиент и прошивка берут их отсюда. */
+/* USB-идентификаторы прошивки. 1209:0001 — тестовый PID pid.codes, им пользуются
+ * и другие самоделки, поэтому клиент проверяет ещё и имя устройства (строку
+ * продукта / интерфейса USB). Свой PID: pid.codes или Raspberry Pi (VID 2E8A) —
+ * меняется здесь, клиент и прошивка берут значения отсюда. */
 #define PM_USB_VID        0x1209u
 #define PM_USB_PID        0x0001u
+#define PM_USB_PRODUCT    "pmtoken"
 
 #define PM_MAX_FRAME      (40u * 1024u)
 #define PM_MAX_STR        255u

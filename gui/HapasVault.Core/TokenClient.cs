@@ -1,10 +1,29 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 
 namespace HapasVault.Core;
 
-public sealed record TokenInfo(bool Paired, bool SetupDone, bool Unlocked, uint Protocol, uint Count, uint UptimeSeconds);
+public sealed record TokenInfo(bool Paired, bool SetupDone, bool Unlocked, uint Protocol, uint Count, uint UptimeSeconds,
+                               uint UsedBytes = 0, uint CapacityBytes = 0)
+{
+    /// <summary>Прошивка сообщает занятое место и хранилище открыто.</summary>
+    public bool StorageKnown => CapacityBytes > 0 && Unlocked;
+    public double StorageFraction => CapacityBytes > 0 ? Math.Clamp((double)UsedBytes / CapacityBytes, 0, 1) : 0;
+    public uint FreeBytes => CapacityBytes > UsedBytes ? CapacityBytes - UsedBytes : 0;
+
+    /// <summary>Сколько ещё записей среднего (по хранилищу) размера поместится.</summary>
+    public uint EstimatedMoreEntries
+    {
+        get
+        {
+            const uint header = 6, typical = 110;   // заголовок хранилища; запись «сайт, логин, пароль»
+            uint avg = Count > 0 && UsedBytes > header ? Math.Max(32u, (UsedBytes - header) / Count) : typical;
+            return FreeBytes / avg;
+        }
+    }
+}
 
 /// <summary>Как искать токен.</summary>
 public enum TokenConnection { Auto, Usb, Simulator }
@@ -12,7 +31,10 @@ public enum TokenConnection { Auto, Usb, Simulator }
 /// <summary>Через что подключены сейчас.</summary>
 public enum TokenTransport { None, Simulator, Usb }
 
-public sealed record VaultItem(uint Id, string Category, string Name, OtpKind Otp = OtpKind.None);
+public sealed record VaultItem(uint Id, string Category, string Name, OtpKind Otp = OtpKind.None, bool SteamConfirmations = false);
+
+/// <summary>SteamID записи и (по запросу) код восстановления.</summary>
+public sealed record SteamInfo(ulong SteamId, string? RevocationCode);
 
 public sealed record Credential(string Login, string Password);
 
@@ -104,7 +126,7 @@ public sealed unsafe partial class TokenClient : ITokenClient
     public Task<TokenInfo> GetInfoAsync() => Run(h =>
     {
         Check(Native.pmapi_info(h, out var i));
-        return new TokenInfo(i.Paired != 0, i.SetupDone != 0, i.Unlocked != 0, i.Proto, i.Count, i.UptimeS);
+        return new TokenInfo(i.Paired != 0, i.SetupDone != 0, i.Unlocked != 0, i.Proto, i.Count, i.UptimeS, i.Used, i.Capacity);
     });
 
     // ---------- настройка, восстановление, замок ----------
@@ -166,7 +188,9 @@ public sealed unsafe partial class TokenClient : ITokenClient
     private static void OnItem(nint ctx, uint id, byte* category, byte* name, byte otp)
     {
         var items = (List<VaultItem>)GCHandle.FromIntPtr(ctx).Target!;
-        items.Add(new VaultItem(id, Native.Utf8(category), Native.Utf8(name), otp <= 2 ? (OtpKind)otp : OtpKind.None));
+        // 3 — Steam Guard с подтверждениями (core/otp.h, OTP_STEAM_MOBILE)
+        var kind = otp switch { 1 => OtpKind.Totp, 2 or 3 => OtpKind.Steam, _ => OtpKind.None };
+        items.Add(new VaultItem(id, Native.Utf8(category), Native.Utf8(name), kind, otp == 3));
     }
 
     public Task<Credential> GetAsync(uint id) => Run(h =>
@@ -262,6 +286,21 @@ public sealed unsafe partial class TokenClient : ITokenClient
         {
             new Span<byte>(code, 16).Clear();
         }
+    });
+
+    public Task<byte[]> GetSteamConfirmationKeyAsync(uint id, long unixTime, string tag) => Run(h =>
+    {
+        var key = new byte[20];
+        fixed (byte* k = key)
+            Check(Native.pmapi_steam_conf(h, id, (ulong)unixTime, tag, k));
+        return key;
+    });
+
+    public Task<SteamInfo> GetSteamInfoAsync(uint id, bool revocationCode = false) => Run(h =>
+    {
+        byte* rev = stackalloc byte[32];
+        Check(Native.pmapi_steam_info(h, id, out ulong sid, revocationCode ? rev : null, revocationCode ? 32u : 0u));
+        return new SteamInfo(sid, revocationCode ? Native.Utf8(rev) : null);
     });
 
     public Task DeleteAsync(uint id) => Call(h => Native.pmapi_delete(h, id));
