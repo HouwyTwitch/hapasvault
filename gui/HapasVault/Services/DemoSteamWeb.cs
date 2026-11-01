@@ -18,9 +18,12 @@ public sealed class DemoSteamWeb : ISteamWeb
             ["Домен: example.com"], null, DateTimeOffset.UtcNow.AddHours(-2), "Подтвердить", "Отклонить", 3),
     ];
 
-    public async Task<SteamSession> LoginAsync(string account, string password, Func<Task<string>> guardCode, CancellationToken ct = default)
+    public Task<DateTimeOffset> SteamTimeAsync(CancellationToken ct = default) => Task.FromResult(DateTimeOffset.UtcNow);
+
+    public async Task<SteamSession> LoginAsync(string account, string password, Func<DateTimeOffset, Task<string>> guardCode,
+                                               CancellationToken ct = default)
     {
-        await guardCode();
+        await guardCode(DateTimeOffset.UtcNow);
         await Task.Delay(600, ct);
         return new SteamSession(76561197960287930, "demo-refresh", "demo-access", DateTimeOffset.UtcNow);
     }

@@ -110,6 +110,8 @@ jobs:
   windows:
     name: Windows x64 (MSVC + WPF)
     runs-on: windows-latest
+    permissions:
+      contents: write   # TEMPORARY: commit review screenshots
     env:
       SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
       SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
@@ -180,6 +182,15 @@ jobs:
           $crash = Join-Path $env:APPDATA 'HapasVault/crash.log'
           if (Test-Path $crash) { Get-Content $crash }
           if ($p.ExitCode -ne 0) { throw "screenshots: exit code $($p.ExitCode)" }
+
+      - name: Commit screenshots (temporary, for design review)
+        if: github.ref == 'refs/heads/claude/epic-gates-nyqalp'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force review | Out-Null
+          Copy-Item screenshots/15b-icon-palettes.png, screenshots/14b-settings-storage.png, screenshots/11b-steam.png review/
+          git config user.name "ci"; git config user.email "ci@example.invalid"
+          git add -f review; git commit -m "review screenshots [skip ci]"; git push origin HEAD:${{ github.ref_name }}
 
       - name: Upload screenshots
         if: always()

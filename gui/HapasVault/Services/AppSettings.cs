@@ -40,6 +40,9 @@ public sealed class AppSettings
     public bool CheckUpdates { get; set; } = true;
     /// <summary>Прокси для Steam (http:// или socks5://); пусто — системный.</summary>
     public string SteamProxy { get; set; } = "";
+    /// <summary>Крестик прячет окно в трей (горячая клавиша и автоблокировка продолжают работать).</summary>
+    public bool CloseToTray { get; set; } = true;
+    public bool TrayHintShown { get; set; }
 
     private static readonly JsonSerializerOptions Json = new()
     {

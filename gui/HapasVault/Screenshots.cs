@@ -179,6 +179,8 @@ internal static class Screenshots
             }
         });
 
+        var iconBefore = window.Icon;
+        var colorBefore = theme.Target("Primary");
         await Shot("15-vault-dark", async () =>
         {
             theme.Mode = ThemeMode.Dark;
@@ -188,6 +190,24 @@ internal static class Screenshots
             vaultShell!.Section = Section.Vault;
             await Settle();
             vaultShell.Vault.Search = "о";
+        });
+
+        // иконка окна (и трея) перекрашивается вместе с палитрой
+        await Shot("15b-icon", () =>
+        {
+            if (ReferenceEquals(window.Icon, iconBefore) || theme.Target("Primary") == colorBefore)
+                throw new InvalidOperationException("иконка окна не сменилась вместе с палитрой");
+            var dv = new DrawingVisual();
+            using (var dc = dv.RenderOpen())
+            {
+                dc.DrawRectangle(Brushes.White, null, new Rect(0, 0, 560, 280));
+                dc.DrawImage(Platform.AppIcon.Render(colorBefore, Colors.White, 256), new Rect(12, 12, 256, 256));
+                dc.DrawImage(Platform.AppIcon.Render(theme.Target("Primary"), theme.Target("OnPrimary"), 256), new Rect(292, 12, 256, 256));
+            }
+            var bmp = new RenderTargetBitmap(560, 280, 96, 96, PixelFormats.Pbgra32);
+            bmp.Render(dv);
+            Encode(bmp, Path.Combine(dir, "15b-icon-palettes.png"));
+            return Task.CompletedTask;
         });
 
         await Shot("16-lock-dark", async () => { await shell.LockAsync("Хранилище заблокировано из-за бездействия"); });

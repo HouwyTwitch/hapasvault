@@ -93,6 +93,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         HideFromCapture = s.HideFromCapture;
         CheckUpdates = s.CheckUpdates;
         SteamProxy = s.SteamProxy;
+        CloseToTray = s.CloseToTray;
         Connection = s.Connection;
         _loading = false;
         shell.PropertyChanged += (_, e) =>
@@ -152,6 +153,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _hideFromCapture;
     [ObservableProperty] private bool _checkUpdates;
     [ObservableProperty] private string _steamProxy = "";
+    [ObservableProperty] private bool _closeToTray;
     [ObservableProperty] private string? _steamProxyError;
     [ObservableProperty] private string _steamStatus = "Подтверждения Steam идут на steamcommunity.com, вход — через api.steampowered.com";
     [ObservableProperty] private bool _steamChecking;
@@ -219,6 +221,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (_loading || value == _shell.Settings.Connection) return;
         _ = _shell.ChangeConnectionAsync(value, _shell.Settings.Port);
     }
+    partial void OnCloseToTrayChanged(bool value) => Save(s => s.CloseToTray = value);
     partial void OnCheckUpdatesChanged(bool value) => Save(s => s.CheckUpdates = value);
     partial void OnRadialEnabledChanged(bool value) => SaveHotkey(s => s.RadialEnabled = value);
     partial void OnHotkeyChanged(HotkeyChoice value) => SaveHotkey(s => s.Hotkey = value);
