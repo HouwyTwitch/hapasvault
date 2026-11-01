@@ -4,7 +4,25 @@ using System.Text;
 
 namespace HapasVault.Core;
 
-public sealed record TokenInfo(bool Paired, bool SetupDone, bool Unlocked, uint Protocol, uint Count, uint UptimeSeconds);
+public sealed record TokenInfo(bool Paired, bool SetupDone, bool Unlocked, uint Protocol, uint Count, uint UptimeSeconds,
+                               uint UsedBytes = 0, uint CapacityBytes = 0)
+{
+    /// <summary>Прошивка сообщает занятое место и хранилище открыто.</summary>
+    public bool StorageKnown => CapacityBytes > 0 && Unlocked;
+    public double StorageFraction => CapacityBytes > 0 ? Math.Clamp((double)UsedBytes / CapacityBytes, 0, 1) : 0;
+    public uint FreeBytes => CapacityBytes > UsedBytes ? CapacityBytes - UsedBytes : 0;
+
+    /// <summary>Сколько ещё записей среднего (по хранилищу) размера поместится.</summary>
+    public uint EstimatedMoreEntries
+    {
+        get
+        {
+            const uint header = 6, typical = 110;   // заголовок хранилища; запись «сайт, логин, пароль»
+            uint avg = Count > 0 && UsedBytes > header ? Math.Max(32u, (UsedBytes - header) / Count) : typical;
+            return FreeBytes / avg;
+        }
+    }
+}
 
 /// <summary>Как искать токен.</summary>
 public enum TokenConnection { Auto, Usb, Simulator }
@@ -107,7 +125,7 @@ public sealed unsafe partial class TokenClient : ITokenClient
     public Task<TokenInfo> GetInfoAsync() => Run(h =>
     {
         Check(Native.pmapi_info(h, out var i));
-        return new TokenInfo(i.Paired != 0, i.SetupDone != 0, i.Unlocked != 0, i.Proto, i.Count, i.UptimeS);
+        return new TokenInfo(i.Paired != 0, i.SetupDone != 0, i.Unlocked != 0, i.Proto, i.Count, i.UptimeS, i.Used, i.Capacity);
     });
 
     // ---------- настройка, восстановление, замок ----------

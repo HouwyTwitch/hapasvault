@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using HapasVault.Controls;
@@ -161,6 +162,16 @@ internal static class Screenshots
 
         await Shot("14-settings", () => { vaultShell!.Section = Section.Settings; return Task.CompletedTask; });
 
+        // память токена: показатель есть и посчитан
+        await Shot("14b-settings-storage", async () =>
+        {
+            await Settle();
+            var settings = (SettingsViewModel)vaultShell!.Current!;
+            if (!settings.StorageKnown || settings.StorageValue <= 0 || !settings.StorageHint.Contains("поместится"))
+                throw new InvalidOperationException("память токена не показана: " + settings.StorageText);
+            if (FindText(window, "Память токена") is { } t) t.BringIntoView();
+        });
+
         await Shot("15-vault-dark", async () =>
         {
             theme.Mode = ThemeMode.Dark;
@@ -252,6 +263,17 @@ internal static class Screenshots
     }
 
     // дать отыграть анимациям и привязкам
+    private static TextBlock? FindText(DependencyObject root, string text)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is TextBlock tb && tb.Text == text) return tb;
+            if (FindText(child, text) is { } found) return found;
+        }
+        return null;
+    }
+
     private static async Task Settle()
     {
         await Task.Delay(1400);

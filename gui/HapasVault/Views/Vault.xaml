@@ -507,6 +507,27 @@
         <!-- токен -->
         <TextBlock Style="{StaticResource Section}" Text="Токен" />
         <Border Style="{StaticResource SettingRow}" CornerRadius="28,28,6,6">
+          <StackPanel>
+            <TextBlock Style="{StaticResource SettingTitle}" Text="Память токена" />
+            <TextBlock Style="{StaticResource SettingHint}" Text="{Binding StorageText}" />
+            <c:WavyProgress Margin="0,12,0,0" Value="{Binding StorageValue}" Track="{DynamicResource SurfaceContainerHighest}"
+                            Visibility="{Binding StorageKnown, Converter={StaticResource VisibleWhen}}">
+              <c:WavyProgress.Style>
+                <Style TargetType="c:WavyProgress">
+                  <Setter Property="Foreground" Value="{DynamicResource Primary}" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding StorageWarn}" Value="True">
+                      <Setter Property="Foreground" Value="{DynamicResource Error}" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </c:WavyProgress.Style>
+            </c:WavyProgress>
+            <TextBlock Style="{StaticResource SettingHint}" Margin="0,8,0,0" Text="{Binding StorageHint}"
+                       Visibility="{Binding StorageKnown, Converter={StaticResource VisibleWhen}}" />
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource SettingRow}">
           <DockPanel>
             <Button DockPanel.Dock="Right" Style="{StaticResource Button.Tonal}" Content="Сохранить копию" c:A.Icon="{StaticResource Icon.Download}"
                     VerticalAlignment="Center" Command="{Binding BackupCommand}" />

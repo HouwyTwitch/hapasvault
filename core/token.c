@@ -271,6 +271,9 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
         wire_put_u8(&w, PM_PROTO_VERSION);
         wire_put_u16(&w, g_unlocked ? v_count() : 0);
         wire_put_u32(&w, (uint32_t)(hal_millis() / 1000u));
+        /* занято / всего: сколько ещё записей поместится — видно в настройках */
+        wire_put_u32(&w, g_unlocked ? (uint32_t)g_plain_len : 0u);
+        wire_put_u32(&w, STORE_PLAIN_MAX);
         break;
     }
 

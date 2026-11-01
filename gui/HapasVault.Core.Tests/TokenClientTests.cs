@@ -23,6 +23,27 @@ public class TokenClientTests
     }
 
     [Fact]
+    public async Task StorageUsageIsReported()
+    {
+        using var sim = new Sim();
+        using var c = sim.Client();
+        await SetupFresh(c);
+        var empty = await c.GetInfoAsync();
+        Assert.True(empty.StorageKnown);
+        Assert.Equal(32768u, empty.CapacityBytes);
+        Assert.True(empty.EstimatedMoreEntries > 200);   // пустой токен: сотни обычных записей
+
+        for (int i = 0; i < 10; i++) await c.AddAsync("Кат", $"Сайт {i}", "user", new string('p', 900));
+        var full = await c.GetInfoAsync();
+        Assert.True(full.UsedBytes > empty.UsedBytes + 9000);
+        Assert.InRange(full.StorageFraction, 0.27, 0.35);
+        Assert.InRange(full.EstimatedMoreEntries, 20u, 26u);   // записи по ~920 байт: осталось ~22 КБ
+
+        await c.LockAsync();
+        Assert.False((await c.GetInfoAsync()).StorageKnown);
+    }
+
+    [Fact]
     public async Task FullFlow()
     {
         using var sim = new Sim();

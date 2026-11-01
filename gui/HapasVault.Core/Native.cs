@@ -16,6 +16,7 @@ internal static unsafe partial class Native
     {
         public int Paired, SetupDone, Unlocked;
         public uint Proto, Count, UptimeS;
+        public uint Used, Capacity;
     }
 
     [LibraryImport(Lib)] internal static partial int pmapi_version();

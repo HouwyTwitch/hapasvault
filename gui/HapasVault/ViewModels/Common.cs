@@ -90,6 +90,13 @@ public sealed partial class ConfirmDialogViewModel : DialogViewModel
 
 public static class Ru
 {
+    /// <summary>Размер по-русски: 512 Б, 3,2 КБ, 32 КБ.</summary>
+    public static string Bytes(long n) => n < 1024
+        ? $"{n} Б"
+        : n < 10 * 1024
+            ? $"{n / 1024.0:0.#} КБ"
+            : $"{n / 1024.0:0} КБ";
+
     /// <summary>Склонение по числу: 1 запись, 2 записи, 5 записей.</summary>
     public static string Plural(long n, string one, string few, string many)
     {

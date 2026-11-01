@@ -637,6 +637,32 @@ static void test_steam_confirmations(void)
     pmc_wipe(&c);
 }
 
+static void test_storage_info(void)
+{
+    pm_client c;
+    uint8_t kv[32];
+    pmc_info_t info;
+    fresh_vault(&c, kv);
+
+    section("INFO: занятое и свободное место");
+    CHECK_RC(pmc_info(&c, &info), 0, "info");
+    CHECK(info.capacity == STORE_PLAIN_MAX, "ёмкость = STORE_PLAIN_MAX");
+    uint32_t empty = info.used;
+    uint32_t id;
+    CHECK_RC(pmc_add(&c, "Кат", "Имя", "логин", "пароль-123", &id), 0, "add");
+    CHECK_RC(pmc_info(&c, &info), 0, "info");
+    /* id 4 + строки с длиной + пароль с u16 + пустой OTP */
+    size_t entry = 4 + 1 + strlen("Кат") + 1 + strlen("Имя") + 1 + strlen("логин") + 2 + strlen("пароль-123") + 1;
+    CHECK(info.used == empty + entry, "used вырос ровно на размер записи");
+    CHECK_RC(pmc_delete(&c, id), 0, "delete");
+    pmc_info(&c, &info);
+    CHECK(info.used == empty, "после удаления — как было");
+    CHECK_RC(pmc_lock(&c), 0, "lock");
+    pmc_info(&c, &info);
+    CHECK(info.used == 0 && info.capacity == STORE_PLAIN_MAX, "закрыто: used не раскрывается");
+    pmc_wipe(&c);
+}
+
 static void test_framer(void)
 {
     section("сборка кадров из потока (USB CDC)");
@@ -776,6 +802,7 @@ int main(int argc, char **argv)
     test_security_hardening();
     test_framer();
     test_steam_confirmations();
+    test_storage_info();
     if (argc > 1 && !strcmp(argv[1], "--argon")) test_real_argon_cost();
     printf("\nИтого: %d пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

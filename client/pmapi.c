@@ -166,6 +166,8 @@ int pmapi_info(pmapi *h, pmapi_info_t *info)
     info->proto = i.proto;
     info->count = i.count;
     info->uptime_s = i.uptime_s;
+    info->used = i.used;
+    info->capacity = i.capacity;
     return 0;
 }
 

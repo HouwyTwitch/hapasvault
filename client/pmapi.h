@@ -24,13 +24,14 @@
 #  define PMAPI __attribute__((visibility("default")))
 #endif
 
-#define PMAPI_VERSION 5   /* 5: подтверждения Steam; 4: USB-токен (CDC); 3: OTP */
+#define PMAPI_VERSION 6   /* 6: занятое место в info; 5: подтверждения Steam; 4: USB (CDC) */
 
 typedef struct pmapi pmapi;
 
 typedef struct {
     int32_t  paired, setup_done, unlocked;
     uint32_t proto, count, uptime_s;
+    uint32_t used, capacity;       /* байты хранилища на токене (used = 0, если закрыто) */
 } pmapi_info_t;
 
 /* otp_type: 0 — нет, 1 — TOTP, 2 — Steam Guard */

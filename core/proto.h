@@ -40,7 +40,8 @@
 #define FE_DECRYPT        5   /* сессия сброшена */
 
 /* Команды (внутри FR_DATA) */
-#define CMD_INFO          0x10  /* -> [u8 flags][u8 proto][u16 count][u32 uptime_s] */
+#define CMD_INFO          0x10  /* -> [u8 flags][u8 proto][u16 count][u32 uptime_s][u32 used][u32 capacity]
+                                         used/capacity — байты открытого хранилища (used = 0, если закрыто) */
 #define CMD_SETUP_BEGIN   0x20  /* [rand_pc 32] -> [rand_token 32] */
 #define CMD_SETUP_COMMIT  0x21  /* [pw_hash 32] -> ok (хранилище создано и открыто) */
 #define CMD_RESTORE       0x22  /* [k_token 32][k_pc 32][pw_hash 32][backup...] -> ok */

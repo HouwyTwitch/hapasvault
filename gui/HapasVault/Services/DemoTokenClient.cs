@@ -55,6 +55,17 @@ public sealed class DemoTokenClient : ITokenClient
         AddLog(0x41, 0, 6, 120);
     }
 
+    // как формат записи на токене (core/token.c): id, три строки, пароль, блок OTP
+    private uint UsedBytes()
+    {
+        static int U(string s) => System.Text.Encoding.UTF8.GetByteCount(s);
+        long n = 6;
+        foreach (var (id, it) in _items)
+            n += 4 + 1 + U(it.Cat) + 1 + U(it.Name) + 1 + U(it.Login) + 2 + U(it.Pw) + 1 +
+                 (_otp.TryGetValue(id, out var o) ? o.ToBlob().Length : 0);
+        return (uint)n;
+    }
+
     private void Seed(string cat, string name, string login) =>
         _items[_next++] = (cat, name, login, Passwords.Generate(new GeneratorOptions(18)));
 
@@ -92,7 +103,7 @@ public sealed class DemoTokenClient : ITokenClient
     public async Task<TokenInfo> GetInfoAsync()
     {
         await Delay(40);
-        return new TokenInfo(IsPaired, _setup, _unlocked, 1, (uint)_items.Count, Uptime);
+        return new TokenInfo(IsPaired, _setup, _unlocked, 3, (uint)_items.Count, Uptime, _unlocked ? UsedBytes() : 0, 32768);
     }
 
     public async Task<string[]> BeginSetupAsync()

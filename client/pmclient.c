@@ -263,6 +263,9 @@ int pmc_info(pm_client *c, pmc_info_t *info)
     info->proto = d[1];
     info->count = (unsigned)(d[2] | d[3] << 8);
     info->uptime_s = wire_get32(d + 4);
+    /* старые прошивки этих полей не присылают */
+    info->used = n >= 16 ? wire_get32(d + 8) : 0;
+    info->capacity = n >= 16 ? wire_get32(d + 12) : 0;
     return 0;
 }
 

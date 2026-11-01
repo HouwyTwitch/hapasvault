@@ -60,6 +60,7 @@ typedef struct {
     int      paired, setup_done, unlocked;
     unsigned proto, count;
     uint32_t uptime_s;
+    uint32_t used, capacity;       /* байты хранилища; 0/0 — прошивка не сообщает */
 } pmc_info_t;
 
 /* otp_type: OTP_NONE / OTP_TOTP / OTP_STEAM (otp.h) */
