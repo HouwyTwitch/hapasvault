@@ -532,6 +532,56 @@
           </StackPanel>
         </Border>
         <Border Style="{StaticResource SettingRow}">
+          <StackPanel>
+            <DockPanel>
+              <Button DockPanel.Dock="Right" Style="{StaticResource Button.Tonal}" Content="Дублировать на новый токен" c:A.Icon="{StaticResource Icon.Usb}"
+                      VerticalAlignment="Center" Command="{Binding DuplicateCommand}" />
+              <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                <TextBlock Style="{StaticResource SettingTitle}" Text="{Binding PcsTitle}" />
+                <TextBlock Style="{StaticResource SettingHint}" TextWrapping="Wrap"
+                           Text="Ещё один компьютер: установите HapasVault, подключите токен и введите 24 слова. Отвязанный ПК больше не получит доступ." />
+              </StackPanel>
+            </DockPanel>
+            <ItemsControl ItemsSource="{Binding Pcs}" Margin="0,8,0,0" Focusable="False">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <DockPanel Margin="0,6,0,0">
+                    <Button DockPanel.Dock="Right" Style="{StaticResource Button.Text}" Content="Отвязать" Command="{Binding RemoveCommand}" />
+                    <c:Icon DockPanel.Dock="Left" Data="{StaticResource Icon.Devices}" Width="20" Height="20" Margin="0,0,12,0"
+                            Foreground="{DynamicResource Primary}" VerticalAlignment="Center" />
+                    <StackPanel VerticalAlignment="Center">
+                      <TextBlock Style="{StaticResource Body.Large}" Text="{Binding Title}" />
+                      <TextBlock Style="{StaticResource SettingHint}" Text="{Binding Subtitle}" />
+                    </StackPanel>
+                  </DockPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource SettingRow}">
+          <StackPanel>
+            <TextBlock Style="{StaticResource SettingTitle}" Text="{Binding TokensTitle}" />
+            <TextBlock Style="{StaticResource SettingHint}" TextWrapping="Wrap"
+                       Text="Программа сама узнаёт, какой токен подключён: основной, запасной — до 4." />
+            <ItemsControl ItemsSource="{Binding Tokens}" Margin="0,8,0,0" Focusable="False">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <DockPanel Margin="0,6,0,0">
+                    <Button DockPanel.Dock="Right" Style="{StaticResource Button.Text}" Content="Забыть" Command="{Binding ForgetCommand}" />
+                    <c:Icon DockPanel.Dock="Left" Data="{StaticResource Icon.Usb}" Width="20" Height="20" Margin="0,0,12,0"
+                            Foreground="{DynamicResource Primary}" VerticalAlignment="Center" />
+                    <StackPanel VerticalAlignment="Center">
+                      <TextBlock Style="{StaticResource Body.Large}" Text="{Binding Title}" />
+                      <TextBlock Style="{StaticResource SettingHint}" Text="{Binding Subtitle}" />
+                    </StackPanel>
+                  </DockPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource SettingRow}">
           <DockPanel>
             <Button DockPanel.Dock="Right" Style="{StaticResource Button.Tonal}" Content="Сохранить копию" c:A.Icon="{StaticResource Icon.Download}"
                     VerticalAlignment="Center" Command="{Binding BackupCommand}" />

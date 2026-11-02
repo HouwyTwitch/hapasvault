@@ -31,16 +31,25 @@
 #define STORE_VAULT_HDR       84u          /* см. store.c */
 #define STORE_LEGACY_BYTES    (20u * STORE_SECTOR)   /* старая разметка: последние 80 КБ */
 
-#define CFG_PAIRED 0x01
+#define CFG_PAIRED 0x01        /* только в старых версиях конфигурации: есть pcs[0] */
 #define CFG_SETUP  0x02
+
+#define STORE_MAX_PCS   4      /* к одному токену — до 4 компьютеров */
+#define STORE_PC_LABEL  32     /* имя ПК: до 31 байта UTF-8 и ноль */
+
+typedef struct {
+    uint8_t pub[32];           /* статический X25519 компьютера */
+    char    label[STORE_PC_LABEL];
+} pm_pc;
 
 typedef struct {
     uint32_t seq;
     uint8_t  flags;
     uint8_t  token_sk[32];     /* статический X25519 токена */
-    uint8_t  pc_pub[32];       /* статический X25519 сопряжённого ПК */
     uint8_t  k_token[32];      /* половина ключа хранилища */
     uint32_t fails;            /* неверных паролей подряд: переживает перезагрузку */
+    uint8_t  pc_count;         /* привязанные компьютеры */
+    pm_pc    pcs[STORE_MAX_PCS];
 } pm_config;
 
 /* Подготовить хранилище: прочитать разметку (или выбрать для чистого токена,

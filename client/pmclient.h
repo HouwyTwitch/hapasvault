@@ -28,18 +28,34 @@
 #define PMC_E_VERSION    (-10)  /* другая версия протокола токена */
 #define PMC_E_NO_DEVICE  (-11)  /* USB-токен не подключён */
 #define PMC_E_BUSY       (-12)  /* порт токена открыт другой программой */
+#define PMC_E_TOO_MANY   (-13)  /* этот ПК уже знает 4 токена */
 #define PMC_E_TOKEN      (-100) /* -100 - FE_*: ошибка кадра от токена */
 
 /* Обмен кадрами: отправить req, получить ответ. Возвращает длину или <0. */
 typedef long (*pmc_xfer_fn)(void *ctx, const uint8_t *req, size_t req_len,
                             uint8_t *resp, size_t cap);
 
+#define PMC_MAX_TOKENS 4         /* один ПК знает до 4 токенов */
+#define PMC_LABEL      32
+
+/* Токен, известный этому ПК. */
+typedef struct {
+    uint8_t token_pk[32];
+    uint8_t k_pc[32];              /* половина ключа хранилища для этого токена */
+    int     have_kpc;
+    char    label[PMC_LABEL];      /* имя токена на этом ПК */
+} pmc_token;
+
 typedef struct {
     pmc_xfer_fn xfer;
     void       *xfer_ctx;
 
     /* постоянные данные ПК (файл идентичности) */
-    uint8_t sk[32], pk[32];        /* статический X25519 ПК */
+    uint8_t   sk[32], pk[32];      /* статический X25519 ПК (один на все токены) */
+    pmc_token known[PMC_MAX_TOKENS];
+    int       known_n;
+
+    /* подключённый сейчас токен (копия записи из known, выбирается по FR_WHO) */
     uint8_t token_pk[32];
     uint8_t k_pc[32];              /* половина ключа хранилища */
     int     paired, have_kpc;
@@ -70,13 +86,29 @@ typedef void (*pmc_log_cb)(void *ctx, uint32_t uptime_s, uint8_t cmd, uint8_t st
 
 /* Создание и идентичность */
 void pmc_init(pm_client *c, pmc_xfer_fn xfer, void *ctx);   /* генерирует ключ ПК */
-int  pmc_identity_save(const pm_client *c, const char *path); /* Windows: DPAPI */
+int  pmc_identity_save(pm_client *c, const char *path);       /* Windows: DPAPI */
 int  pmc_identity_load(pm_client *c, const char *path);
 void pmc_wipe(pm_client *c);
 
 /* Сопряжение (один раз): обмен статическими ключами X25519. Токен запоминает
  * первый ПК и до сброса отказывает остальным; сессии — Noise KK на этих ключах. */
 int  pmc_pair(pm_client *c);
+
+/* Что за токен подключён (открыто, до сессии): его ключ, настроен ли, сколько ПК привязано. */
+int  pmc_who(pm_client *c, uint8_t token_pk[32], int *setup, int *pcs);
+
+/* Привязать этот ПК к уже настроенному токену по 24 словам (подпись ключа ПК ключом K_token).
+ * Заодно из слов получается K_pc: после привязки хранилище открывается мастер-паролем. */
+int  pmc_pair_words(pm_client *c, const char *words);
+
+/* Забыть токен на этом ПК (index — в known; -1 — подключённый). */
+int  pmc_forget_token(pm_client *c, int index);
+
+/* ПК, привязанные к токену (нужно открытое хранилище). id — 8 байт отпечатка ключа ПК. */
+typedef void (*pmc_pc_cb)(void *ctx, int slot, int is_me, const uint8_t id[8], const char *label);
+int  pmc_pc_list(pm_client *c, pmc_pc_cb cb, void *ctx);
+int  pmc_pc_remove(pm_client *c, int slot);
+int  pmc_pc_label(pm_client *c, const char *label);
 
 /* Сессия */
 int  pmc_connect(pm_client *c);

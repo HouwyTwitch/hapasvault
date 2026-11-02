@@ -101,10 +101,23 @@ public sealed class DemoTokenClient : ITokenClient
 
     public Task ForgetPairingAsync() { IsPaired = false; return Task.CompletedTask; }
 
+    private readonly List<PairedPc> _pcs = [new(0, true, "3F9A61C2D04B7E15", Environment.MachineName), new(1, false, "A1B2C3D4E5F60718", "Рабочий ноутбук")];
+
+    public async Task PairWithWordsAsync(string words) { await Delay(400); IsPaired = true; }
+    public Task<TokenWho> WhoAsync() => Task.FromResult(new TokenWho("3F9A61C2D04B7E15", _setup, IsPaired ? _pcs.Count : _setup ? System.Math.Max(_pcs.Count - 1, 1) : 0));
+    public IReadOnlyList<KnownToken> KnownTokens => IsPaired
+        ? [new KnownToken(0, "3F9A61C2D04B7E15", "Основной", true), new KnownToken(1, "77E0B1A9C3D25F64", "Запасной", false)]
+        : [];
+    public Task RenameTokenAsync(int index, string label) => Task.CompletedTask;
+    public Task ForgetTokenAsync(int index) => Task.CompletedTask;
+    public async Task<IReadOnlyList<PairedPc>> GetPcsAsync() { await Delay(60); RequireOpen(); return _pcs.ToList(); }
+    public Task RemovePcAsync(int slot) { _pcs.RemoveAll(p => p.Slot == slot && !p.IsMe); return Task.CompletedTask; }
+    public Task SetPcLabelAsync(string label) => Task.CompletedTask;
+
     public async Task<TokenInfo> GetInfoAsync()
     {
         await Delay(40);
-        return new TokenInfo(IsPaired, _setup, _unlocked, 3, (uint)_items.Count, Uptime, _unlocked ? UsedBytes() : 0, 192 * 1024 - 84);
+        return new TokenInfo(IsPaired, _setup, _unlocked, 5, (uint)_items.Count, Uptime, _unlocked ? UsedBytes() : 0, 192 * 1024 - 84);
     }
 
     public async Task<string[]> BeginSetupAsync()

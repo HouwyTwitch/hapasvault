@@ -6,7 +6,7 @@
 
 #define CFG_MAGIC   0x46434D50u   /* "PMCF" */
 #define VLT_MAGIC   0x54564D50u   /* "PMVT" */
-#define CFG_VERSION 3   /* 3: размер слота (разметка от конца flash); 2: счётчик неверных паролей */
+#define CFG_VERSION 4   /* 4: до 4 привязанных ПК с именами; 3: размер слота; 2: счётчик неверных паролей */
 
 /* Заголовок слота хранилища:
  *   0  magic   u32
@@ -51,9 +51,13 @@ uint32_t store_slot_offset(int slot) { return slot_off(slot); }
 
 /* ---------------- конфигурация ---------------- */
 
+/* v1..v3: [magic][ver][seq][flags][token_sk 32][pc_pub 32][k_token 32][fails][slot]
+ * v4:     [magic][ver][seq][flags][token_sk 32][k_token 32][fails][slot][n][4 × (pub 32, label 32)] */
 #define CFG_BODY_V1 106   /* 4 magic + 1 ver + 4 seq + 1 flags + 32*3 */
 #define CFG_BODY_V2 110   /* + u32 fails */
-#define CFG_BODY    114   /* + u32 размер слота */
+#define CFG_BODY_V3 114   /* + u32 размер слота */
+#define CFG_PC_AT   83
+#define CFG_BODY    (CFG_PC_AT + STORE_MAX_PCS * (32 + STORE_PC_LABEL))
 
 static void cfg_serialize(const pm_config *c, uint8_t *b)
 {
@@ -61,31 +65,60 @@ static void cfg_serialize(const pm_config *c, uint8_t *b)
     put32(b, CFG_MAGIC);
     b[4] = CFG_VERSION;
     put32(b + 5, c->seq);
-    b[9] = c->flags;
+    b[9] = c->flags & (uint8_t)~CFG_PAIRED;
     memcpy(b + 10, c->token_sk, 32);
-    memcpy(b + 42, c->pc_pub, 32);
-    memcpy(b + 74, c->k_token, 32);
-    put32(b + 106, c->fails);
-    put32(b + 110, g_slot);
+    memcpy(b + 42, c->k_token, 32);
+    put32(b + 74, c->fails);
+    put32(b + 78, g_slot);
+    b[82] = c->pc_count;
+    for (int i = 0; i < STORE_MAX_PCS; i++) {
+        uint8_t *e = b + CFG_PC_AT + i * (32 + STORE_PC_LABEL);
+        memset(e, 0, 32 + STORE_PC_LABEL);
+        if (i < c->pc_count) {
+            memcpy(e, c->pcs[i].pub, 32);
+            memcpy(e + 32, c->pcs[i].label, STORE_PC_LABEL);
+            e[32 + STORE_PC_LABEL - 1] = 0;
+        }
+    }
     crypto_blake2b(b + CFG_BODY, 32, b, CFG_BODY);
 }
 
-/* legacy: 1 — разобрать старые версии (1, 2) из старой разметки; 0 — только текущую. */
+/* legacy: 1 — разобрать старые версии (1, 2) из старой разметки; 0 — новую (3 — прошлый
+ * выпуск, 4 — текущий). Единственный ПК старых версий становится pcs[0]. */
 static int cfg_parse(const uint8_t *b, pm_config *c, int legacy, uint32_t *slot)
 {
     uint8_t chk[32];
+    uint8_t v = b[4];
     if (get32(b) != CFG_MAGIC) return -1;
-    if (legacy ? (b[4] != 1 && b[4] != 2) : b[4] != CFG_VERSION) return -1;
-    size_t body = b[4] == 1 ? CFG_BODY_V1 : b[4] == 2 ? CFG_BODY_V2 : CFG_BODY;
+    if (legacy ? (v != 1 && v != 2) : (v != 3 && v != CFG_VERSION)) return -1;
+    size_t body = v == 1 ? CFG_BODY_V1 : v == 2 ? CFG_BODY_V2 : v == 3 ? CFG_BODY_V3 : CFG_BODY;
     crypto_blake2b(chk, 32, b, body);
     if (crypto_verify32(chk, b + body) != 0) return -1;
-    c->fails = b[4] == 1 ? 0 : get32(b + 106);
+    memset(c, 0, sizeof *c);
     c->seq = get32(b + 5);
     c->flags = b[9];
     memcpy(c->token_sk, b + 10, 32);
-    memcpy(c->pc_pub, b + 42, 32);
-    memcpy(c->k_token, b + 74, 32);
-    if (slot) *slot = b[4] == CFG_VERSION ? get32(b + 110) : 0;
+    if (v < 4) {
+        c->fails = v == 1 ? 0 : get32(b + 106);
+        memcpy(c->k_token, b + 74, 32);
+        if (c->flags & CFG_PAIRED) {
+            memcpy(c->pcs[0].pub, b + 42, 32);
+            c->pc_count = 1;
+        }
+        c->flags &= (uint8_t)~CFG_PAIRED;
+        if (slot) *slot = v == 3 ? get32(b + 110) : 0;
+        return 0;
+    }
+    memcpy(c->k_token, b + 42, 32);
+    c->fails = get32(b + 74);
+    if (slot) *slot = get32(b + 78);
+    c->pc_count = b[82] <= STORE_MAX_PCS ? b[82] : 0;
+    for (int i = 0; i < c->pc_count; i++) {
+        const uint8_t *e = b + CFG_PC_AT + i * (32 + STORE_PC_LABEL);
+        memcpy(c->pcs[i].pub, e, 32);
+        memcpy(c->pcs[i].label, e + 32, STORE_PC_LABEL);
+        c->pcs[i].label[STORE_PC_LABEL - 1] = 0;
+    }
     return 0;
 }
 

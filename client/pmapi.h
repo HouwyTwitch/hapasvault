@@ -25,7 +25,7 @@
 #  define PMAPI __attribute__((visibility("default")))
 #endif
 
-#define PMAPI_VERSION 7   /* 7: хранилище больше кадра (бэкап до PM_MAX_BACKUP); 6: место в info */
+#define PMAPI_VERSION 8   /* 8: до 4 токенов на ПК и 4 ПК на токен; 7: бэкап частями */
 
 typedef struct pmapi pmapi;
 
@@ -64,8 +64,24 @@ PMAPI int     pmapi_is_attached(const pmapi *h);
 /* 0 — не подключён, 1 — симулятор (TCP), 2 — USB/последовательный порт. */
 PMAPI int     pmapi_transport(const pmapi *h);
 
-PMAPI int     pmapi_pair(pmapi *h);
-PMAPI int     pmapi_forget_pairing(pmapi *h);   /* токен сброшен без этого ПК */
+PMAPI int     pmapi_pair(pmapi *h);               /* первый ПК чистого токена */
+PMAPI int     pmapi_pair_words(pmapi *h, const char *words);   /* ещё один ПК настроенного токена */
+PMAPI int     pmapi_forget_pairing(pmapi *h);   /* забыть подключённый токен (сброшен без этого ПК) */
+
+/* Подключённый токен: 8 байт отпечатка ключа, настроен ли, сколько ПК привязано (до сессии). */
+PMAPI int     pmapi_who(pmapi *h, uint8_t token_id[8], int *setup, int *pcs);
+
+/* Токены, известные этому ПК (до 4): выбор при подключении — сам, по ключу токена. */
+PMAPI int     pmapi_token_count(const pmapi *h);
+PMAPI int     pmapi_token_get(const pmapi *h, int index, uint8_t token_id[8], char *label, size_t cap, int *active);
+PMAPI int     pmapi_token_rename(pmapi *h, int index, const char *label);
+PMAPI int     pmapi_token_forget(pmapi *h, int index);
+
+/* Компьютеры, привязанные к подключённому токену (до 4; нужно открытое хранилище). */
+typedef void (*pmapi_pc_cb)(void *ctx, int slot, int is_me, const uint8_t id[8], const char *label);
+PMAPI int     pmapi_pc_list(pmapi *h, pmapi_pc_cb cb, void *ctx);
+PMAPI int     pmapi_pc_remove(pmapi *h, int slot);
+PMAPI int     pmapi_pc_label(pmapi *h, const char *label);
 PMAPI int     pmapi_connect(pmapi *h);
 PMAPI int     pmapi_info(pmapi *h, pmapi_info_t *info);
 

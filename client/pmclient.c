@@ -103,20 +103,70 @@ static int write_atomic(const char *path, const uint8_t *data, size_t len)
 }
 
 /* ---------------- файл идентичности ----------------
- * [4 "PMID"][1 ver][1 flags][sk 32][token_pk 32][k_pc 32]
+ * v1: [4 "PMID"][1 ver=1][1 flags][sk 32][token_pk 32][k_pc 32]   — один токен
+ * v2: [4 "PMID"][1 ver=2][sk 32][u8 n] n * {[u8 flags][token_pk 32][k_pc 32][label 32]}
  * Windows: содержимое шифруется DPAPI (привязка к учётной записи Windows).
  */
-#define ID_LEN 102
+#define ID_LEN_V1 102
+#define ID_ENTRY  (1 + 32 + 32 + PMC_LABEL)
+#define ID_LEN_V2 (4 + 1 + 32 + 1 + PMC_MAX_TOKENS * ID_ENTRY)
 
-int pmc_identity_save(const pm_client *c, const char *path)
+static int find_token(const pm_client *c, const uint8_t pk[32])
 {
-    uint8_t b[ID_LEN];
+    for (int i = 0; i < c->known_n; i++)
+        if (crypto_verify32(c->known[i].token_pk, pk) == 0) return i;
+    return -1;
+}
+
+/* Записать подключённый токен в список (новый — добавить). */
+static int commit_active(pm_client *c)
+{
+    if (!c->paired) return 0;
+    int i = find_token(c, c->token_pk);
+    if (i < 0) {
+        if (c->known_n >= PMC_MAX_TOKENS) return PMC_E_TOO_MANY;
+        i = c->known_n++;
+        memset(&c->known[i], 0, sizeof c->known[i]);
+        memcpy(c->known[i].token_pk, c->token_pk, 32);
+        snprintf(c->known[i].label, PMC_LABEL, "Токен %d", i + 1);
+    }
+    memcpy(c->known[i].k_pc, c->k_pc, 32);
+    c->known[i].have_kpc = c->have_kpc;
+    return 0;
+}
+
+static void select_token(pm_client *c, int i)
+{
+    if (i < 0) {
+        c->paired = c->have_kpc = 0;
+        crypto_wipe(c->token_pk, 32);
+        crypto_wipe(c->k_pc, 32);
+        return;
+    }
+    memcpy(c->token_pk, c->known[i].token_pk, 32);
+    memcpy(c->k_pc, c->known[i].k_pc, 32);
+    c->have_kpc = c->known[i].have_kpc;
+    c->paired = 1;
+}
+
+int pmc_identity_save(pm_client *c, const char *path)
+{
+    int rc = commit_active(c);
+    if (rc != 0) return rc;
+    uint8_t b[ID_LEN_V2];
+    memset(b, 0, sizeof b);
     memcpy(b, "PMID", 4);
-    b[4] = 1;
-    b[5] = (uint8_t)((c->paired ? 1 : 0) | (c->have_kpc ? 2 : 0));
-    memcpy(b + 6, c->sk, 32);
-    memcpy(b + 38, c->token_pk, 32);
-    memcpy(b + 70, c->k_pc, 32);
+    b[4] = 2;
+    memcpy(b + 5, c->sk, 32);
+    b[37] = (uint8_t)c->known_n;
+    for (int i = 0; i < c->known_n; i++) {
+        uint8_t *e = b + 38 + i * ID_ENTRY;
+        e[0] = c->known[i].have_kpc ? 1 : 0;
+        memcpy(e + 1, c->known[i].token_pk, 32);
+        memcpy(e + 33, c->known[i].k_pc, 32);
+        memcpy(e + 65, c->known[i].label, PMC_LABEL);
+        e[65 + PMC_LABEL - 1] = 0;
+    }
 
     const uint8_t *data = b;
     size_t data_len = sizeof b;
@@ -129,7 +179,7 @@ int pmc_identity_save(const pm_client *c, const char *path)
     data = out.pbData;
     data_len = out.cbData;
 #endif
-    int rc = write_atomic(path, data, data_len);
+    rc = write_atomic(path, data, data_len);
 #ifdef _WIN32
     LocalFree(out.pbData);
 #endif
@@ -139,7 +189,7 @@ int pmc_identity_save(const pm_client *c, const char *path)
 
 int pmc_identity_load(pm_client *c, const char *path)
 {
-    uint8_t raw[1024];
+    uint8_t raw[2048];
     FILE *f = open_utf8(path, "rb");
     if (!f) return PMC_E_FILE;
     size_t n = fread(raw, 1, sizeof raw, f);
@@ -155,15 +205,38 @@ int pmc_identity_load(pm_client *c, const char *path)
     len = out.cbData;
 #endif
     int rc = 0;
-    if (len != ID_LEN || memcmp(b, "PMID", 4) != 0 || b[4] != 1) {
+    if (len < 5 || memcmp(b, "PMID", 4) != 0) {
         rc = PMC_E_FILE;
-    } else {
-        c->paired = b[5] & 1;
-        c->have_kpc = (b[5] >> 1) & 1;
+    } else if (b[4] == 1 && len == ID_LEN_V1) {
+        /* прежний формат: один токен */
         memcpy(c->sk, b + 6, 32);
         crypto_x25519_public_key(c->pk, c->sk);
-        memcpy(c->token_pk, b + 38, 32);
-        memcpy(c->k_pc, b + 70, 32);
+        c->known_n = 0;
+        if (b[5] & 1) {
+            memset(&c->known[0], 0, sizeof c->known[0]);
+            memcpy(c->known[0].token_pk, b + 38, 32);
+            memcpy(c->known[0].k_pc, b + 70, 32);
+            c->known[0].have_kpc = (b[5] >> 1) & 1;
+            snprintf(c->known[0].label, PMC_LABEL, "Токен 1");
+            c->known_n = 1;
+        }
+        select_token(c, c->known_n ? 0 : -1);
+    } else if (b[4] == 2 && len == ID_LEN_V2 && b[37] <= PMC_MAX_TOKENS) {
+        memcpy(c->sk, b + 5, 32);
+        crypto_x25519_public_key(c->pk, c->sk);
+        c->known_n = b[37];
+        for (int i = 0; i < c->known_n; i++) {
+            const uint8_t *e = b + 38 + i * ID_ENTRY;
+            c->known[i].have_kpc = e[0] & 1;
+            memcpy(c->known[i].token_pk, e + 1, 32);
+            memcpy(c->known[i].k_pc, e + 33, 32);
+            memcpy(c->known[i].label, e + 65, PMC_LABEL);
+            c->known[i].label[PMC_LABEL - 1] = 0;
+        }
+        /* какой токен подключён — решит pmc_connect по FR_WHO; до него — первый */
+        select_token(c, c->known_n ? 0 : -1);
+    } else {
+        rc = PMC_E_FILE;
     }
 #ifdef _WIN32
     SecureZeroMemory(out.pbData, out.cbData);
@@ -171,6 +244,25 @@ int pmc_identity_load(pm_client *c, const char *path)
 #endif
     crypto_wipe(raw, sizeof raw);
     return rc;
+}
+
+int pmc_forget_token(pm_client *c, int index)
+{
+    if (index < 0) index = c->paired ? find_token(c, c->token_pk) : -1;
+    if (index < 0 || index >= c->known_n) {
+        select_token(c, -1);
+        return 0;
+    }
+    int was_active = c->paired && crypto_verify32(c->known[index].token_pk, c->token_pk) == 0;
+    crypto_wipe(&c->known[index], sizeof c->known[index]);
+    for (int i = index; i + 1 < c->known_n; i++) c->known[i] = c->known[i + 1];
+    c->known_n--;
+    crypto_wipe(&c->known[c->known_n], sizeof c->known[0]);
+    if (was_active) {
+        pm_session_clear(&c->sess);
+        select_token(c, -1);
+    }
+    return 0;
 }
 
 /* ---------------- обмен ---------------- */
@@ -212,27 +304,81 @@ static int simple_cmd(pm_client *c, uint8_t cmd)
 
 /* ---------------- сопряжение и сессия ---------------- */
 
+int pmc_who(pm_client *c, uint8_t token_pk[32], int *setup, int *pcs)
+{
+    c->buf_out[0] = FR_WHO;
+    long r = raw_xfer(c, 1);
+    if (r < 0) return (int)r;
+    if (r != 35 || c->buf_in[0] != FR_WHO) return PMC_E_PROTO;
+    memcpy(token_pk, c->buf_in + 1, 32);
+    if (setup) *setup = c->buf_in[33] & 1;
+    if (pcs) *pcs = c->buf_in[34];
+    return 0;
+}
+
+static int pair_done(pm_client *c, const uint8_t token_pk[32], const uint8_t *k_pc)
+{
+    if (find_token(c, token_pk) < 0 && c->known_n >= PMC_MAX_TOKENS) return PMC_E_TOO_MANY;
+    memcpy(c->token_pk, token_pk, 32);
+    c->paired = 1;
+    if (k_pc) { memcpy(c->k_pc, k_pc, 32); c->have_kpc = 1; }
+    else { crypto_wipe(c->k_pc, 32); c->have_kpc = 0; }      /* новый токен: старая половина не подходит */
+    return commit_active(c);
+}
+
 int pmc_pair(pm_client *c)
 {
+    if (c->known_n >= PMC_MAX_TOKENS) return PMC_E_TOO_MANY;
     c->buf_out[0] = FR_PAIR;
     memcpy(c->buf_out + 1, c->pk, 32);
     long r = raw_xfer(c, 33);
     if (r < 0) return (int)r;
     if (r != 33 || c->buf_in[0] != FR_PAIR) return PMC_E_PROTO;
-    memcpy(c->token_pk, c->buf_in + 1, 32);
-    c->paired = 1;
-    return 0;
+    uint8_t tpk[32];
+    memcpy(tpk, c->buf_in + 1, 32);
+    return pair_done(c, tpk, NULL);
+}
+
+int pmc_pair_words(pm_client *c, const char *words)
+{
+    uint8_t seed[32], k_token[32], k_pc[32], tpk[32];
+    if (bip39_decode(words, seed) != 0) return PMC_E_SEED;
+    pm_keys_from_seed(seed, k_token, k_pc);
+    crypto_wipe(seed, 32);
+    int rc = pmc_who(c, tpk, NULL, NULL);
+    if (rc == 0) {
+        c->buf_out[0] = FR_PAIR_PROOF;
+        memcpy(c->buf_out + 1, c->pk, 32);
+        pm_pair_proof(c->buf_out + 33, k_token, c->pk, tpk);
+        long r = raw_xfer(c, 65);
+        crypto_wipe(c->buf_out, 65);
+        if (r < 0) rc = (int)r;
+        else if (r != 33 || c->buf_in[0] != FR_PAIR_PROOF || crypto_verify32(c->buf_in + 1, tpk) != 0) rc = PMC_E_PROTO;
+        else rc = pair_done(c, tpk, k_pc);
+    }
+    crypto_wipe(k_token, 32);
+    crypto_wipe(k_pc, 32);
+    return rc;
 }
 
 int pmc_connect(pm_client *c)
 {
+    /* какой токен подключён: выбираем его запись (до 4 токенов на ПК) */
+    if (c->known_n > 0) {
+        uint8_t tpk[32];
+        int rc = pmc_who(c, tpk, NULL, NULL);
+        if (rc != 0) return rc;
+        if (c->paired) commit_active(c);      /* ключ после setup/restore — в запись токена */
+        select_token(c, find_token(c, tpk));
+    }
     if (!c->paired) return PMC_E_NOT_PAIRED;
     uint8_t esk[32], epk[32];
     os_rng(esk, 32);
     crypto_x25519_public_key(epk, esk);
     c->buf_out[0] = FR_HELLO;
-    memcpy(c->buf_out + 1, epk, 32);
-    long r = raw_xfer(c, 33);
+    memcpy(c->buf_out + 1, c->pk, 32);
+    memcpy(c->buf_out + 33, epk, 32);
+    long r = raw_xfer(c, 65);
     if (r < 0) { crypto_wipe(esk, 32); return (int)r; }
     if (r != 33 || c->buf_in[0] != FR_HELLO) { crypto_wipe(esk, 32); return PMC_E_PROTO; }
     int e = pm_session_establish(&c->sess, PM_INITIATOR, c->sk, c->pk, esk, epk,
@@ -611,14 +757,43 @@ int pmc_backup(pm_client *c, uint8_t *out, size_t cap, size_t *len)
 int pmc_factory_reset(pm_client *c)
 {
     int st = simple_cmd(c, CMD_FACTORY_RESET);
-    if (st == ST_OK) {
-        pm_session_clear(&c->sess);
-        c->paired = 0;
-        c->have_kpc = 0;
-        crypto_wipe(c->token_pk, 32);
-        crypto_wipe(c->k_pc, 32);
-    }
+    if (st == ST_OK) pmc_forget_token(c, -1);     /* у токена новый ключ — эта запись больше не нужна */
     return st;
+}
+
+int pmc_pc_list(pm_client *c, pmc_pc_cb cb, void *ctx)
+{
+    const uint8_t *d = NULL;
+    size_t n = 0;
+    int st = request(c, (const uint8_t[]){CMD_PC_LIST}, 1, &d, &n);
+    if (st != ST_OK) return st;
+    wire_r r = {d, n, 0};
+    unsigned cnt = wire_u8(&r);
+    for (unsigned i = 0; i < cnt && !r.err; i++) {
+        int slot = wire_u8(&r), me = wire_u8(&r);
+        const uint8_t *id = wire_bytes(&r, 8);
+        char label[PMC_LABEL + 224];
+        copy_str(&r, label, sizeof label, 1);
+        if (!r.err && cb) cb(ctx, slot, me, id, label);
+    }
+    return r.err ? PMC_E_PROTO : 0;
+}
+
+int pmc_pc_remove(pm_client *c, int slot)
+{
+    uint8_t req[2] = {CMD_PC_REMOVE, (uint8_t)slot};
+    int st = request(c, req, 2, NULL, NULL);
+    return st;
+}
+
+int pmc_pc_label(pm_client *c, const char *label)
+{
+    size_t l = strlen(label);
+    if (l >= PMC_LABEL) l = PMC_LABEL - 1;
+    while (l && ((unsigned char)label[l] & 0xC0) == 0x80) l--;   /* не резать символ UTF-8 */
+    uint8_t req[2 + PMC_LABEL] = {CMD_PC_LABEL, (uint8_t)l};
+    memcpy(req + 2, label, l);
+    return request(c, req, 2 + l, NULL, NULL);
 }
 
 const char *pmc_strerror(int code)

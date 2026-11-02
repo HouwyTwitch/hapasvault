@@ -5,6 +5,7 @@
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
+#  include <wincrypt.h>
 #else
 #  define _DEFAULT_SOURCE
 #  include <sys/stat.h>
@@ -248,7 +249,12 @@ static void test_full_flow(void)
     section("чужой ПК");
     imp.paired = 1;
     memcpy(imp.token_pk, c.token_pk, 32);
-    CHECK_RC(pmc_connect(&imp), PMC_E_TOKEN - FE_DECRYPT, "ПК с чужим ключом не получает сессию");
+    CHECK_RC(pmc_connect(&imp), PMC_E_TOKEN - FE_NOT_PAIRED, "ПК с чужим ключом не получает сессию (токен его не знает)");
+    imp.buf_out[0] = FR_HELLO;                      /* и напрямую: HELLO с чужим ключом ПК */
+    memcpy(imp.buf_out + 1, imp.pk, 32);
+    memset(imp.buf_out + 33, 7, 32);
+    CHECK(token_handle(imp.buf_out, 65, imp.buf_in, sizeof imp.buf_in) == 2 && imp.buf_in[1] == FE_NOT_PAIRED,
+          "токен отвечает «не привязан»");
     CHECK_RC(pmc_connect(&c), 0, "свой ПК переподключается");
     CHECK_RC(pmc_info(&c, &info), 0, "info");
     CHECK(!info.unlocked, "новая сессия начинается заблокированной");
@@ -680,9 +686,9 @@ static void write_legacy_layout(const pm_config *cfg, const uint8_t *blob, size_
     wire_put32(b, 0x46434D50u);                    /* "PMCF" */
     b[4] = 2;
     wire_put32(b + 5, cfg->seq);
-    b[9] = cfg->flags;
+    b[9] = (uint8_t)(cfg->flags | (cfg->pc_count ? 0x01 : 0));   /* старый флаг «сопряжён» */
     memcpy(b + 10, cfg->token_sk, 32);
-    memcpy(b + 42, cfg->pc_pub, 32);
+    memcpy(b + 42, cfg->pcs[0].pub, 32);
     memcpy(b + 74, cfg->k_token, 32);
     wire_put32(b + 106, cfg->fails);
     crypto_blake2b(b + 110, 32, b, 110);
@@ -793,6 +799,190 @@ static void test_big_vault_and_migration(void)
     CHECK(list_count(&c) == 2, "обе записи");
     remove("legacy_flash.bin");
     pmc_wipe(&c);
+    hal_sim_open(NULL);
+}
+
+static int g_pcs_n, g_pcs_me;
+static char g_pcs_label[4][64];
+static void pcs_cb(void *ctx, int slot, int me, const uint8_t id[8], const char *label)
+{
+    (void)ctx; (void)id;
+    if (slot < 4) snprintf(g_pcs_label[slot], sizeof g_pcs_label[slot], "%s", label);
+    if (me) g_pcs_me = slot;
+    g_pcs_n++;
+}
+static int pcs(pm_client *c)
+{
+    g_pcs_n = 0;
+    g_pcs_me = -1;
+    int rc = pmc_pc_list(c, pcs_cb, NULL);
+    return rc == 0 ? g_pcs_n : -1;
+}
+
+static void test_multi_pc(void)
+{
+    pm_client a, b, x;
+    char words[512], other[512];
+    uint32_t id;
+
+    section("до 4 ПК на токен: привязка по 24 словам");
+    hal_sim_open(NULL);
+    token_init();
+    new_client(&a);
+    pmc_pair(&a);
+    pmc_connect(&a);
+    pmc_setup_begin(&a, words, sizeof words);
+    CHECK_RC(pmc_setup_commit(&a, PW), 0, "настроен на ПК A");
+    pmc_add(&a, "", "Общая", "user", "shared-pass", &id);
+    CHECK_RC(pmc_pc_label(&a, "Домашний ПК"), 0, "имя ПК A");
+
+    new_client(&b);
+    CHECK_RC(pmc_pair(&b), PMC_E_TOKEN - FE_ALREADY_PAIRED, "без слов второй ПК не привязать");
+    /* другая, но корректная фраза */
+    uint8_t rnd[32], seed2[32];
+    hal_rng(rnd, 32);
+    pm_seed_from_rand(seed2, rnd, rnd);
+    bip39_to_string(seed2, other, sizeof other);
+    CHECK_RC(pmc_pair_words(&b, other), PMC_E_TOKEN - FE_BAD_PROOF, "чужая фраза — отказ");
+    CHECK_RC(pmc_pair_words(&b, words), PMC_E_TOKEN - FE_BAD_PROOF, "сразу после ошибки — пауза");
+    hal_sim_advance_ms(1100);
+    CHECK_RC(pmc_pair_words(&b, words), 0, "своя фраза — ПК B привязан");
+    CHECK(b.have_kpc, "K_pc получен из слов");
+    CHECK_RC(pmc_connect(&b), 0, "B: сессия");
+    CHECK_RC(pmc_unlock(&b, PW), 0, "B: тот же мастер-пароль открывает хранилище");
+    char login[64], pw[64];
+    CHECK_RC(pmc_get(&b, id, login, sizeof login, pw, sizeof pw), 0, "B видит записи");
+    CHECK(!strcmp(pw, "shared-pass"), "те же данные");
+    CHECK_RC(pmc_pc_label(&b, "Рабочий ноутбук"), 0, "имя ПК B");
+    CHECK(pcs(&b) == 2 && g_pcs_me == 1, "в списке 2 ПК, B — второй");
+    CHECK(!strcmp(g_pcs_label[0], "Домашний ПК") && !strcmp(g_pcs_label[1], "Рабочий ноутбук"), "имена видны");
+    CHECK_RC(pmc_connect(&a), 0, "A по-прежнему работает");
+
+    section("не больше 4, отвязка");
+    for (int i = 0; i < 2; i++) {
+        new_client(&x);
+        CHECK_RC(pmc_pair_words(&x, words), 0, "ещё ПК");
+    }
+    new_client(&x);
+    CHECK_RC(pmc_pair_words(&x, words), PMC_E_TOKEN - FE_PAIR_FULL, "пятый — отказ");
+    pmc_connect(&a);
+    pmc_unlock(&a, PW);
+    CHECK(pcs(&a) == 4, "4 ПК");
+    CHECK_RC(pmc_pc_remove(&a, 1), 0, "A отвязывает B");
+    CHECK_RC(pmc_connect(&b), PMC_E_TOKEN - FE_NOT_PAIRED, "B больше не подключается: токен его не знает");
+    CHECK(pcs(&a) == 3 && g_pcs_me == 0, "осталось 3");
+    reboot_token();
+    pmc_connect(&a);
+    pmc_unlock(&a, PW);
+    CHECK(pcs(&a) == 3, "список пережил перезагрузку");
+    CHECK_RC(pmc_pair_words(&b, words), 0, "B снова привязывается по словам");
+    CHECK_RC(pmc_connect(&a), 0, "A");
+    pmc_unlock(&a, PW);
+    CHECK_RC(pmc_pc_remove(&a, 0), 0, "A отвязывает себя");
+    pmc_info_t inf;
+    CHECK_RC(pmc_info(&a, &inf), PMC_E_TOKEN - FE_NO_SESSION, "сессия A закрыта");
+    CHECK_RC(pmc_connect(&a), PMC_E_TOKEN - FE_NOT_PAIRED, "A больше не привязан");
+    CHECK_RC(pmc_pair(&a), PMC_E_TOKEN - FE_ALREADY_PAIRED, "и TOFU больше не работает");
+    pmc_wipe(&a); pmc_wipe(&b); pmc_wipe(&x);
+}
+
+static void test_multi_token(void)
+{
+    static uint8_t img_a[1024 * 1024];
+    pm_client c;
+    char words[512];
+    uint32_t ida, idb;
+    char login[64], pw[64];
+
+    section("до 4 токенов на ПК: выбор сам");
+    new_client(&c);
+    hal_sim_open(NULL);                                       /* токен A */
+    token_init();
+    pmc_pair(&c);
+    pmc_connect(&c);
+    pmc_setup_begin(&c, words, sizeof words);
+    pmc_setup_commit(&c, "pw-A");
+    pmc_add(&c, "", "На токене A", "a", "pa", &ida);
+    uint8_t pk_a[32];
+    memcpy(pk_a, c.token_pk, 32);
+    memcpy(img_a, hal_sim_flash(), sizeof img_a);
+
+    hal_sim_open(NULL);                                       /* токен B: другая плата */
+    token_init();
+    CHECK_RC(pmc_connect(&c), PMC_E_NOT_PAIRED, "незнакомый токен — не ошибка связи, а «не привязан»");
+    uint8_t who[32];
+    int setup = -1, n = -1;
+    CHECK_RC(pmc_who(&c, who, &setup, &n), 0, "who");
+    CHECK(!setup && n == 0 && memcmp(who, pk_a, 32) != 0, "чистый токен, другой ключ");
+    CHECK_RC(pmc_pair(&c), 0, "привязали B");
+    pmc_connect(&c);
+    pmc_setup_begin(&c, words, sizeof words);
+    pmc_setup_commit(&c, "pw-B");
+    pmc_add(&c, "", "На токене B", "b", "pb", &idb);
+    CHECK(c.known_n == 2, "ПК знает оба токена");
+    CHECK_RC(pmc_identity_save(&c, "multi.id"), 0, "save");
+
+    memcpy(hal_sim_flash(), img_a, sizeof img_a);            /* снова A */
+    token_init();
+    pm_client c2;
+    new_client(&c2);
+    CHECK_RC(pmc_identity_load(&c2, "multi.id"), 0, "load (v2)");
+    CHECK_RC(pmc_connect(&c2), 0, "подключён A — выбран A");
+    CHECK(!memcmp(c2.token_pk, pk_a, 32), "ключ A");
+    CHECK_RC(pmc_unlock(&c2, "pw-A"), 0, "открыт своим паролем");
+    CHECK_RC(pmc_get(&c2, ida, login, sizeof login, pw, sizeof pw), 0, "get");
+    CHECK(!strcmp(pw, "pa"), "данные A");
+    CHECK(list_count(&c2) == 1 && seen("На токене A"), "только записи A");
+
+    section("файл ключа ПК: старый формат (один токен)");
+    {
+        uint8_t v1[102] = {'P', 'M', 'I', 'D', 1, 3};
+        memcpy(v1 + 6, c2.sk, 32);
+        memcpy(v1 + 38, pk_a, 32);
+        memcpy(v1 + 70, c2.known[0].k_pc, 32);
+        int ia = memcmp(c2.known[0].token_pk, pk_a, 32) == 0 ? 0 : 1;
+        memcpy(v1 + 70, c2.known[ia].k_pc, 32);
+        const uint8_t *fd = v1;
+        size_t fl = sizeof v1;
+#ifdef _WIN32
+        /* на Windows файл ключа всегда под DPAPI — и старый тоже */
+        DATA_BLOB in = {(DWORD)sizeof v1, v1}, out = {0, NULL};
+        CHECK(CryptProtectData(&in, L"pmtoken identity", NULL, NULL, NULL, CRYPTPROTECT_UI_FORBIDDEN, &out),
+              "DPAPI");
+        fd = out.pbData;
+        fl = out.cbData;
+#endif
+        FILE *f = fopen("v1.id", "wb");
+        fwrite(fd, 1, fl, f);
+        fclose(f);
+#ifdef _WIN32
+        LocalFree(out.pbData);
+#endif
+        pm_client old;
+        new_client(&old);
+        CHECK_RC(pmc_identity_load(&old, "v1.id"), 0, "загружен v1");
+        CHECK(old.known_n == 1 && old.have_kpc, "один токен с ключом");
+        CHECK_RC(pmc_connect(&old), 0, "подключается");
+        CHECK_RC(pmc_unlock(&old, "pw-A"), 0, "и открывается");
+        CHECK_RC(pmc_identity_save(&old, "v1.id"), 0, "сохранён уже как v2");
+        pmc_wipe(&old);
+        remove("v1.id");
+    }
+
+    section("не больше 4 токенов на ПК");
+    for (int i = 0; i < 2; i++) {
+        hal_sim_open(NULL);
+        token_init();
+        CHECK_RC(pmc_pair(&c2), 0, "ещё токен");
+    }
+    hal_sim_open(NULL);
+    token_init();
+    CHECK(c2.known_n == 4, "4 токена");
+    CHECK_RC(pmc_pair(&c2), PMC_E_TOO_MANY, "пятый — отказ (сначала забыть ненужный)");
+    CHECK_RC(pmc_forget_token(&c2, 3), 0, "забыли один");
+    CHECK_RC(pmc_pair(&c2), 0, "теперь можно");
+    remove("multi.id");
+    pmc_wipe(&c); pmc_wipe(&c2);
     hal_sim_open(NULL);
 }
 
@@ -978,6 +1168,8 @@ int main(int argc, char **argv)
     test_steam_confirmations();
     test_storage_info();
     test_big_vault_and_migration();
+    test_multi_pc();
+    test_multi_token();
     if (argc > 1 && !strcmp(argv[1], "--argon")) test_real_argon_cost();
     printf("\nИтого: %d пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

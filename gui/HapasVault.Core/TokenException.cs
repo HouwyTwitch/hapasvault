@@ -28,6 +28,10 @@ public enum TokenError
     BadTime,
     Version,
     Busy,             // порт токена открыт другой программой
+    TooManyTokens,    // ПК уже знает 4 токена
+    NeedWords,        // токен настроен: новый ПК — по 24 словам
+    PairFull,         // к токену уже привязано 4 ПК
+    WrongPhrase,      // фраза не от этого токена
 }
 
 public sealed class TokenException : Exception
@@ -65,6 +69,10 @@ public sealed class TokenException : Exception
             -10 => TokenError.Version,
             -11 => TokenError.Disconnected,
             -12 => TokenError.Busy,
+            -13 => TokenError.TooManyTokens,
+            -106 => TokenError.NeedWords,
+            -107 => TokenError.PairFull,
+            -108 => TokenError.WrongPhrase,
             -1 => TokenError.Disconnected,
             -2 or -3 => TokenError.SessionLost,
             -4 => TokenError.NotPaired,
@@ -89,7 +97,11 @@ public sealed class TokenException : Exception
         TokenError.Disconnected => "Нет связи с токеном. Проверьте подключение.",
         TokenError.SessionLost => "Сессия с токеном закрыта.",
         TokenError.NotPaired => "Этот компьютер ещё не сопряжён с токеном.",
-        TokenError.TokenWasReset => "Токен был сброшен. Выполните сопряжение заново.",
+        TokenError.TokenWasReset => "Токен больше не знает этот компьютер: его сбросили или отвязали этот ПК. Привяжите заново.",
+        TokenError.TooManyTokens => "Этот компьютер уже знает 4 токена. Забудьте ненужный в Настройки → Токены этого ПК.",
+        TokenError.NeedWords => "Токен уже настроен на другом компьютере. Привяжите этот ПК по 24 словам.",
+        TokenError.PairFull => "К токену уже привязано 4 компьютера. Отвяжите ненужный на одном из них (Настройки → Компьютеры).",
+        TokenError.WrongPhrase => "Фраза не подходит к этому токену. Подождите секунду и проверьте слова.",
         TokenError.ForeignToken => "Токен сопряжён с другим компьютером.",
         TokenError.AlreadyPaired => "Токен уже сопряжён с другим компьютером. Сбросьте его там.",
         TokenError.NotSetup => "Токен ещё не настроен.",

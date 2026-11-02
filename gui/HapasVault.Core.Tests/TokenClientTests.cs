@@ -164,16 +164,16 @@ public class TokenClientTests
             await Fails(TokenError.AlreadyPaired, () => other.PairAsync());
         }
 
-        // токен «стёрли»: ПК помнит сопряжение, токен — нет
+        // токен «стёрли»: у него новый ключ — для ПК это незнакомый чистый токен
         sim.Stop();
         File.Delete(sim.FlashPath);
         sim.Start();
         using var c2 = sim.Client();
-        await Fails(TokenError.TokenWasReset, () => c2.AttachAsync());
-        await c2.ForgetPairingAsync();
-        Assert.False(c2.IsPaired);
         await c2.AttachAsync();
+        Assert.False(c2.IsPaired);
+        Assert.False((await c2.WhoAsync()).SetupDone);
         await c2.PairAsync();
+        Assert.True(c2.IsPaired);
     }
 
     [Fact]

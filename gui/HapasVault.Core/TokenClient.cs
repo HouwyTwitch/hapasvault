@@ -33,6 +33,15 @@ public enum TokenTransport { None, Simulator, Usb }
 
 public sealed record VaultItem(uint Id, string Category, string Name, OtpKind Otp = OtpKind.None, bool SteamConfirmations = false);
 
+/// <summary>Подключённый токен до сессии: отпечаток ключа, настроен ли, сколько ПК привязано.</summary>
+public sealed record TokenWho(string Id, bool SetupDone, int PcCount);
+
+/// <summary>Токен, известный этому ПК (до 4). Active — подключён сейчас.</summary>
+public sealed record KnownToken(int Index, string Id, string Label, bool Active);
+
+/// <summary>Компьютер, привязанный к токену (до 4). IsMe — этот ПК.</summary>
+public sealed record PairedPc(int Slot, bool IsMe, string Id, string Label);
+
 /// <summary>SteamID записи и (по запросу) код восстановления.</summary>
 public sealed record SteamInfo(ulong SteamId, string? RevocationCode);
 
@@ -120,6 +129,62 @@ public sealed unsafe partial class TokenClient : ITokenClient
     public Task ConnectAsync() => Call(h => Native.pmapi_connect(h), connecting: true);
 
     public Task PairAsync() => Call(h => Native.pmapi_pair(h), connecting: true);
+
+    public Task PairWithWordsAsync(string words)
+    {
+        string w = string.Join(' ', words.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return Call(h => Native.pmapi_pair_words(h, w), connecting: true);
+    }
+
+    public Task<TokenWho> WhoAsync() => Run(h =>
+    {
+        byte* id = stackalloc byte[8];
+        Check(Native.pmapi_who(h, id, out int setup, out int pcs));
+        return new TokenWho(Convert.ToHexString(new ReadOnlySpan<byte>(id, 8)), setup != 0, pcs);
+    });
+
+    public IReadOnlyList<KnownToken> KnownTokens
+    {
+        get
+        {
+            var list = new List<KnownToken>();
+            byte* id = stackalloc byte[8];
+            byte* label = stackalloc byte[64];
+            int n = Native.pmapi_token_count(Handle);
+            for (int i = 0; i < n; i++)
+                if (Native.pmapi_token_get(Handle, i, id, label, 64, out int active) == 0)
+                    list.Add(new KnownToken(i, Convert.ToHexString(new ReadOnlySpan<byte>(id, 8)), Native.Utf8(label), active != 0));
+            return list;
+        }
+    }
+
+    public Task RenameTokenAsync(int index, string label) => Call(h => Native.pmapi_token_rename(h, index, label));
+    public Task ForgetTokenAsync(int index) => Call(h => Native.pmapi_token_forget(h, index));
+
+    public Task<IReadOnlyList<PairedPc>> GetPcsAsync() => Run<IReadOnlyList<PairedPc>>(h =>
+    {
+        var list = new List<PairedPc>();
+        var gc = GCHandle.Alloc(list);
+        try
+        {
+            Check(Native.pmapi_pc_list(h, &OnPc, GCHandle.ToIntPtr(gc)));
+        }
+        finally
+        {
+            gc.Free();
+        }
+        return list;
+    });
+
+    [UnmanagedCallersOnly]
+    private static void OnPc(nint ctx, int slot, int me, byte* id, byte* label)
+    {
+        var list = (List<PairedPc>)GCHandle.FromIntPtr(ctx).Target!;
+        list.Add(new PairedPc(slot, me != 0, Convert.ToHexString(new ReadOnlySpan<byte>(id, 8)), Native.Utf8(label)));
+    }
+
+    public Task RemovePcAsync(int slot) => Call(h => Native.pmapi_pc_remove(h, slot));
+    public Task SetPcLabelAsync(string label) => Call(h => Native.pmapi_pc_label(h, label));
 
     public Task ForgetPairingAsync() => Call(h => Native.pmapi_forget_pairing(h));
 
