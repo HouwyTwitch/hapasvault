@@ -16,11 +16,13 @@ public sealed class NativeDirAttribute(string path) : Attribute
 /// <summary>pmtoken_sim на свободном порту с flash во временном каталоге.</summary>
 public sealed class Sim : IDisposable
 {
-    private static int _next = 47200 + Environment.ProcessId % 500;
+    // ниже эфемерных портов (Linux 32768+, Windows 49152+): исходящее соединение
+    // теста не займёт порт, на котором должен слушать следующий симулятор
+    private static int _next = 21000 + Environment.ProcessId % 4000 * 2;
     private Process? _proc;
 
     public string Dir { get; }
-    public ushort Port { get; }
+    public ushort Port { get; private set; }
 
     public Sim(string? dir = null, bool pty = false)
     {
@@ -55,30 +57,41 @@ public sealed class Sim : IDisposable
             StartPty();
             return;
         }
-        _proc = Process.Start(new ProcessStartInfo(Executable)
+        var err = new System.Text.StringBuilder();
+        for (int attempt = 0; attempt < 5; attempt++)
         {
-            ArgumentList = { FlashPath, Port.ToString() },
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        })!;
-        _proc.OutputDataReceived += (_, _) => { };
-        _proc.BeginOutputReadLine();
-        _proc.BeginErrorReadLine();
-        for (int i = 0; i < 100; i++)
-        {
-            try
+            if (attempt > 0) Port = (ushort)Interlocked.Increment(ref _next);   // порт занят — другой
+            err.Clear();
+            _proc = Process.Start(new ProcessStartInfo(Executable)
             {
-                using var c = new TcpClient();
-                c.Connect("127.0.0.1", Port);
-                return;   // пробное подключение: симулятор его примет и отпустит
-            }
-            catch (SocketException)
+                ArgumentList = { FlashPath, Port.ToString() },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            })!;
+            _proc.OutputDataReceived += (_, _) => { };
+            _proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (err) err.AppendLine(e.Data); };
+            _proc.BeginOutputReadLine();
+            _proc.BeginErrorReadLine();
+            for (int i = 0; i < 300 && !_proc.HasExited; i++)
             {
-                Thread.Sleep(50);
+                try
+                {
+                    using var c = new TcpClient();
+                    c.Connect("127.0.0.1", Port);
+                    return;   // пробное подключение: симулятор его примет и отпустит
+                }
+                catch (SocketException)
+                {
+                    Thread.Sleep(50);
+                }
             }
+            if (!_proc.HasExited) break;
+            _proc.Dispose();
+            _proc = null;
         }
-        throw new TimeoutException("симулятор не запустился");
+        _proc?.Kill();
+        throw new TimeoutException($"симулятор не запустился (порт {Port}): {err}");
     }
 
     private void StartPty()
