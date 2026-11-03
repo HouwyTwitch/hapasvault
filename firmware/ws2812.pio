@@ -1,4 +1,5 @@
 ; SPDX-License-Identifier: GPL-3.0-or-later
+; Ассемблированные коды — в ws2812_pio.h (pioasm не нужен).
 ; WS2812 (NeoPixel): 800 кГц, бит = T1+T2+T3 тактов PIO; «1» — длинный импульс, «0» — короткий.
 .program ws2812
 .side_set 1

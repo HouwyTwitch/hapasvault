@@ -30,7 +30,7 @@
 #ifdef PICO_DEFAULT_WS2812_PIN
 #  include "hardware/clocks.h"
 #  include "hardware/pio.h"
-#  include "ws2812.pio.h"
+#  include "ws2812_pio.h"
 #endif
 #include <stdlib.h>
 #include <string.h>

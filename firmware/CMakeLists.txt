@@ -37,6 +37,6 @@ pico_set_program_name(pmtoken "pmtoken")
 pico_set_program_description(pmtoken "HapasVault hardware password token")
 pico_add_extra_outputs(pmtoken)
 
-# RGB-светодиод WS2812 (RP2040-Zero и подобные) — через PIO
-pico_generate_pio_header(pmtoken ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio)
+# RGB-светодиод WS2812 (RP2040-Zero и подобные) — через PIO; программа уже
+# ассемблирована в ws2812_pio.h (pioasm из pico-sdk 2.1.1 не собирается новыми GCC)
 target_link_libraries(pmtoken PRIVATE hardware_pio)
