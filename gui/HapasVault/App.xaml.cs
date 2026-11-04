@@ -13,8 +13,9 @@ using HapasVault.ViewModels;
 namespace HapasVault;
 
 /// <summary>
-/// Запуск:  HapasVault.exe [--demo] [--screenshots &lt;каталог&gt;]
+/// Запуск:  HapasVault.exe [--demo] [--tray] [--screenshots &lt;каталог&gt;]
 ///   --demo         без токена, данные в памяти;
+///   --tray         сразу в трей (автозапуск с Windows);
 ///   --screenshots  отрисовать все экраны в PNG и выйти (для CI).
 /// </summary>
 public partial class App : Application
@@ -32,6 +33,7 @@ public partial class App : Application
         base.OnStartup(e);
         string? shots = ArgValue(e.Args, "--screenshots");
         bool demo = shots != null || e.Args.Contains("--demo");
+        bool startHidden = shots == null && e.Args.Contains(Platform.Autostart.TrayArg);
 
         if (shots == null)
         {
@@ -76,7 +78,8 @@ public partial class App : Application
         theme.Changed += (_, _) => window.ApplyChrome();
         MainWindow = window;
         ShutdownMode = ShutdownMode.OnExplicitShutdown;    // окно прячется в трей, выход — явный
-        window.Show();
+        if (startHidden) new WindowInteropHelper(window).EnsureHandle();   // окно-владелец для трея и горячей клавиши
+        else window.Show();
         UpdateIcons(window, theme);
         theme.Changed += (_, _) => UpdateIcons(window, theme);
 
@@ -102,6 +105,7 @@ public partial class App : Application
         _shell.Hotkey.Pressed += async (_, _) => await _shell.Radial.ToggleAsync();
         bool hotkeyOk = _shell.ApplyHotkey();
 
+        if (!demo) Platform.Autostart.Refresh();
         if (demo) await _shell.EnterDemoAsync();
         await _shell.StartAsync();
         if (settings.CheckUpdates && !demo) _ = _shell.CheckUpdatesAsync(silent: true);

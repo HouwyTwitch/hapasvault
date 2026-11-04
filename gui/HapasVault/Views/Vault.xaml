@@ -637,13 +637,23 @@
         </Border>
 
         <TextBlock Style="{StaticResource Section}" Text="Работа в фоне" />
-        <Border Style="{StaticResource SettingRow}" CornerRadius="28">
+        <Border Style="{StaticResource SettingRow}" CornerRadius="28,28,6,6">
           <DockPanel>
             <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Switch}" IsChecked="{Binding CloseToTray}" VerticalAlignment="Center" />
             <StackPanel VerticalAlignment="Center">
               <TextBlock Style="{StaticResource SettingTitle}" Text="Крестик сворачивает в трей" />
               <TextBlock Style="{StaticResource SettingHint}" TextWrapping="Wrap"
                          Text="Радиальное меню и автоблокировка продолжают работать. Выход — правой кнопкой по значку в трее" />
+            </StackPanel>
+          </DockPanel>
+        </Border>
+        <Border Style="{StaticResource SettingRow}" CornerRadius="6,6,28,28">
+          <DockPanel>
+            <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Switch}" IsChecked="{Binding StartWithWindows}" VerticalAlignment="Center" />
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock Style="{StaticResource SettingTitle}" Text="Запускать вместе с Windows" />
+              <TextBlock Style="{StaticResource SettingHint}" TextWrapping="Wrap"
+                         Text="Сразу в трей: горячая клавиша готова, токен подключится, когда вставите" />
             </StackPanel>
           </DockPanel>
         </Border>

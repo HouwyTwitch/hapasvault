@@ -10,7 +10,8 @@
  * RNG:   пул BLAKE2b из нескольких независимых источников (pico_rand — на RP2350
  *        это аппаратный TRNG; биты ROSC; шум АЦП датчика температуры; время),
  *        выдача — «быстрое стирание ключа»: каждый вызов перешифровывает пул.
- * LED:   встроенный светодиод платы (GPIO 25 на Pico/Pico 2).
+ * LED:   встроенный светодиод платы (GPIO 25 на Pico/Pico 2) или RGB WS2812 через PIO
+ *        (RP2040-Zero и подобные: PICO_DEFAULT_WS2812_PIN из описания платы).
  */
 #include "board.h"
 #include "hal.h"
@@ -26,6 +27,11 @@
 #include "pico/rand.h"
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
+#ifdef PICO_DEFAULT_WS2812_PIN
+#  include "hardware/clocks.h"
+#  include "hardware/pio.h"
+#  include "ws2812_pio.h"
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -200,10 +206,70 @@ void hal_led(hal_led_t state)
     else g_led = state;
 }
 
+#ifdef PICO_DEFAULT_WS2812_PIN
+/* Цвет 0xRRGGBB; яркость низкая — диод прямо на плате, на полной слепит.
+ * Порядок байт на проводе — GRB (стандарт WS2812); для клонов с RGB: -DPMTOKEN_WS2812_RGB=1 */
+#define RGB_OFF      0x000000u
+#define RGB_IDLE     0x000010u      /* тусклый синий: ждёт */
+#define RGB_SESSION  0x000030u      /* синий: сессия */
+#define RGB_UNLOCKED 0x002800u      /* зелёный: хранилище открыто */
+#define RGB_ERROR    0x300000u      /* красный: ошибка */
+
+static PIO      g_pio = pio0;
+static uint     g_sm;
+static bool     g_ws_ok;
+static uint32_t g_ws_last = 0xFFFFFFFFu;
+
+static void ws2812_init(void)
+{
+    if (!pio_can_add_program(g_pio, &ws2812_program)) return;
+    int sm = pio_claim_unused_sm(g_pio, false);
+    if (sm < 0) return;
+    g_sm = (uint)sm;
+    uint off = pio_add_program(g_pio, &ws2812_program);
+    uint pin = PICO_DEFAULT_WS2812_PIN;
+
+    pio_gpio_init(g_pio, pin);
+    pio_sm_set_consecutive_pindirs(g_pio, g_sm, pin, 1, true);
+    pio_sm_config c = ws2812_program_get_default_config(off);
+    sm_config_set_sideset_pins(&c, pin);
+    sm_config_set_out_shift(&c, false, true, 24);          /* старшим битом вперёд, 24 бита */
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    float bit_cycles = ws2812_T1 + ws2812_T2 + ws2812_T3;
+    sm_config_set_clkdiv(&c, (float)clock_get_hz(clk_sys) / (800000.0f * bit_cycles));
+    pio_sm_init(g_pio, g_sm, off, &c);
+    pio_sm_set_enabled(g_pio, g_sm, true);
+    g_ws_ok = true;
+}
+
+static void ws2812_put(uint32_t rgb)
+{
+    if (!g_ws_ok || rgb == g_ws_last) return;              /* шлём только смену цвета */
+    if (pio_sm_is_tx_fifo_full(g_pio, g_sm)) return;       /* не блокируемся: догоним в следующем цикле */
+    g_ws_last = rgb;
+    uint32_t r = (rgb >> 16) & 0xFF, g = (rgb >> 8) & 0xFF, b = rgb & 0xFF;
+#if PMTOKEN_WS2812_RGB
+    uint32_t w = (r << 16) | (g << 8) | b;
+#else
+    uint32_t w = (g << 16) | (r << 8) | b;
+#endif
+    pio_sm_put(g_pio, g_sm, w << 8u);
+}
+#endif
+
 void board_led_task(void)
 {
-#ifdef PICO_DEFAULT_LED_PIN
     uint64_t t = hal_millis();
+#ifdef PICO_DEFAULT_WS2812_PIN
+    uint32_t c;
+    if (t < g_error_until) c = (t / 100) % 2 ? RGB_ERROR : RGB_OFF;
+    else switch (g_led) {
+    case LED_UNLOCKED: c = RGB_UNLOCKED; break;
+    case LED_SESSION:  c = t % 1000 < 120 ? RGB_SESSION : RGB_OFF; break;
+    default:           c = t % 2000 < 120 ? RGB_IDLE : RGB_OFF; break;
+    }
+    ws2812_put(c);
+#elif defined(PICO_DEFAULT_LED_PIN)
     bool on;
     if (t < g_error_until) on = (t / 100) % 2;                     /* часто: ошибка */
     else switch (g_led) {
@@ -212,12 +278,16 @@ void board_led_task(void)
     default:           on = t % 3000 < 30; break;                  /* редкая вспышка: ждёт */
     }
     gpio_put(PICO_DEFAULT_LED_PIN, on);
+#else
+    (void)t;
 #endif
 }
 
 int board_init(void)
 {
-#ifdef PICO_DEFAULT_LED_PIN
+#ifdef PICO_DEFAULT_WS2812_PIN
+    ws2812_init();
+#elif defined(PICO_DEFAULT_LED_PIN)
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 #endif

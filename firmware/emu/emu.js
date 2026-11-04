@@ -92,6 +92,35 @@ async function main() {
   }).listen(port, '127.0.0.1', () => console.log(`[emu] 127.0.0.1:${port}`));
 
   const core = mcu.core, clock = sim.clock, ns = 1e9 / (MHZ * 1e6);
+
+  // EMU_WS2812=<пин>: декодировать сигнал RGB-светодиода. PIO в rp2040js идёт своим циклом
+  // (без делителя частоты), поэтому ширина импульса — в тактах PIO (с задержками [n]):
+  // «1» — 6, «0» — 3 (ws2812.pio); пауза между кадрами — по шагам (стоящий автомат тактов не копит)
+  const wsPin = process.env.EMU_WS2812;
+  if (wsPin !== undefined) {
+    let steps = 0, rise = 0, fall = 0, bits = 0, n = 0, last = -1;
+    const pioCycles = () => mcu.pio.reduce((a, p) => a + p.machines.reduce((b, m) => b + (m.enabled ? m.cycles : 0), 0), 0);
+    for (const pio of mcu.pio) {
+      const step = pio.step.bind(pio);
+      pio.step = () => { steps++; step(); };
+    }
+    mcu.gpio[Number(wsPin)].addListener((st) => {
+      if (st === 1) {
+        if (n && steps - fall > 100) { bits = 0; n = 0; }   // пауза — начало нового кадра
+        rise = pioCycles();
+      } else if (st === 0 && rise) {
+        fall = steps;
+        bits = (bits << 1) | (pioCycles() - rise > 4 ? 1 : 0);
+        if (++n === 24) {
+          const g = (bits >> 16) & 255, r = (bits >> 8) & 255, b = bits & 255;
+          const rgb = (r << 16) | (g << 8) | b;
+          if (rgb !== last) console.log(`[emu] WS2812: #${rgb.toString(16).padStart(6, '0')}`);
+          last = rgb; bits = 0; n = 0;
+        }
+      }
+    });
+  }
+
   const run = () => {
     for (let i = 0; i < 400000; i++) {
       const h = hooks.get(core.PC);

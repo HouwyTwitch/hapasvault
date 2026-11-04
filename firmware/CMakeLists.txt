@@ -1,6 +1,6 @@
-# Прошивка pmtoken для Raspberry Pi Pico (RP2040) и Pico 2 (RP2350).
+# Прошивка pmtoken для Raspberry Pi Pico (RP2040), Pico 2 (RP2350) и Waveshare RP2040-Zero.
 #
-#   cmake -S firmware -B build-fw -DPICO_SDK_PATH=/path/to/pico-sdk -DPICO_BOARD=pico   # или pico2
+#   cmake -S firmware -B build-fw -DPICO_SDK_PATH=/path/to/pico-sdk -DPICO_BOARD=pico   # или pico2, waveshare_rp2040_zero
 #   cmake --build build-fw
 #   -> build-fw/pmtoken.uf2: зажать BOOTSEL, подключить, скопировать на диск RPI-RP2
 cmake_minimum_required(VERSION 3.13)
@@ -36,3 +36,7 @@ pico_enable_stdio_uart(pmtoken 0)
 pico_set_program_name(pmtoken "pmtoken")
 pico_set_program_description(pmtoken "HapasVault hardware password token")
 pico_add_extra_outputs(pmtoken)
+
+# RGB-светодиод WS2812 (RP2040-Zero и подобные) — через PIO; программа уже
+# ассемблирована в ws2812_pio.h (pioasm из pico-sdk 2.1.1 не собирается новыми GCC)
+target_link_libraries(pmtoken PRIVATE hardware_pio)

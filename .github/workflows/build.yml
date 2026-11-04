@@ -77,14 +77,15 @@ jobs:
             git -C ~/pico-sdk submodule update -q --init --depth 1 lib/tinyusb
           fi
 
-      - name: Build firmware (Pico, Pico 2)
+      - name: Build firmware (Pico, Pico 2, RP2040-Zero)
         run: |
-          for b in pico pico2; do
+          for b in pico pico2 waveshare_rp2040_zero; do
             cmake -S firmware -B build-fw-$b -DPICO_SDK_PATH=$HOME/pico-sdk -DPICO_BOARD=$b
             cmake --build build-fw-$b -j
             cp build-fw-$b/pmtoken.uf2 pmtoken-$b.uf2
           done
-          arm-none-eabi-size build-fw-pico/pmtoken.elf build-fw-pico2/pmtoken.elf
+          mv pmtoken-waveshare_rp2040_zero.uf2 pmtoken-rp2040-zero.uf2
+          arm-none-eabi-size build-fw-*/pmtoken.elf
 
       - name: Build pmhwtest
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j --target pmhwtest
@@ -100,6 +101,19 @@ jobs:
           kill %1 || true
           cat emu.log
           exit $rc
+
+      # RP2040-Zero: светодиод — WS2812 на GP16 через PIO; эмулятор декодирует цвета
+      - name: Run RP2040-Zero firmware in emulator (WS2812 LED)
+        working-directory: firmware/emu
+        run: |
+          EMU_WS2812=16 node emu.js ../../pmtoken-rp2040-zero.uf2 47301 > emu0.log 2>&1 &
+          for i in $(seq 60); do grep -q "CDC готов" emu0.log && break; sleep 1; done
+          rc=0; timeout 900 ../../build/pmhwtest tcp:47301 || rc=$?
+          kill %1 || true
+          grep -v "запрос:" emu0.log
+          [ $rc -eq 0 ] || exit $rc
+          grep -q "WS2812: #000010" emu0.log || { echo "нет синей вспышки ожидания"; exit 1; }
+          grep -q "WS2812: #002800" emu0.log || { echo "нет зелёного (хранилище открыто)"; exit 1; }
 
       - name: Upload firmware
         uses: actions/upload-artifact@v7
