@@ -1151,6 +1151,27 @@ static void test_security_hardening(void)
     pmc_wipe(&c);
 }
 
+/* прошивка протокола 4: незнакомый кадр -> FR_ERROR/FE_BAD_FRAME */
+static long old_fw_xfer(void *ctx, const uint8_t *req, size_t req_len, uint8_t *resp, size_t cap)
+{
+    (void)ctx; (void)req; (void)req_len; (void)cap;
+    resp[0] = FR_ERROR;
+    resp[1] = FE_BAD_FRAME;
+    return 2;
+}
+
+static void test_old_firmware(void)
+{
+    section("старая прошивка: «обновите», а не «ошибка протокола»");
+    pm_client c;
+    pmc_init(&c, old_fw_xfer, NULL);
+    uint8_t pk[32];
+    CHECK_RC(pmc_who(&c, pk, NULL, NULL), PMC_E_VERSION, "WHO");
+    c.known_n = 1;                      /* и при подключении к знакомому токену */
+    CHECK_RC(pmc_connect(&c), PMC_E_VERSION, "connect");
+    pmc_wipe(&c);
+}
+
 int main(int argc, char **argv)
 {
 #ifdef _WIN32
@@ -1170,6 +1191,7 @@ int main(int argc, char **argv)
     test_big_vault_and_migration();
     test_multi_pc();
     test_multi_token();
+    test_old_firmware();
     if (argc > 1 && !strcmp(argv[1], "--argon")) test_real_argon_cost();
     printf("\nИтого: %d пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

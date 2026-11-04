@@ -308,6 +308,8 @@ int pmc_who(pm_client *c, uint8_t token_pk[32], int *setup, int *pcs)
 {
     c->buf_out[0] = FR_WHO;
     long r = raw_xfer(c, 1);
+    /* прошивка до протокола 5 не знает WHO: «обновите прошивку», а не «ошибка протокола» */
+    if (r == PMC_E_TOKEN - FE_BAD_FRAME) return PMC_E_VERSION;
     if (r < 0) return (int)r;
     if (r != 35 || c->buf_in[0] != FR_WHO) return PMC_E_PROTO;
     memcpy(token_pk, c->buf_in + 1, 32);

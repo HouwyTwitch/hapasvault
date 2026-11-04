@@ -116,6 +116,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         CheckUpdates = s.CheckUpdates;
         SteamProxy = s.SteamProxy;
         CloseToTray = s.CloseToTray;
+        StartWithWindows = !_shell.IsDemo && Platform.Autostart.IsEnabled;
         Connection = s.Connection;
         _loading = false;
         shell.PropertyChanged += (_, e) =>
@@ -241,6 +242,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _checkUpdates;
     [ObservableProperty] private string _steamProxy = "";
     [ObservableProperty] private bool _closeToTray;
+    [ObservableProperty] private bool _startWithWindows;
     [ObservableProperty] private string? _steamProxyError;
     [ObservableProperty] private string _steamStatus = "Подтверждения Steam идут на steamcommunity.com, вход — через api.steampowered.com";
     [ObservableProperty] private bool _steamChecking;
@@ -311,6 +313,18 @@ public sealed partial class SettingsViewModel : ObservableObject
         _ = _shell.ChangeConnectionAsync(value, _shell.Settings.Port);
     }
     partial void OnCloseToTrayChanged(bool value) => Save(s => s.CloseToTray = value);
+
+    partial void OnStartWithWindowsChanged(bool value)
+    {
+        if (_loading || _shell.IsDemo) return;
+        if (!Platform.Autostart.Set(value))
+        {
+            _shell.Snackbar.Show("Не удалось изменить автозапуск: реестр недоступен");
+            _loading = true;
+            StartWithWindows = !value;
+            _loading = false;
+        }
+    }
     partial void OnCheckUpdatesChanged(bool value) => Save(s => s.CheckUpdates = value);
     partial void OnRadialEnabledChanged(bool value) => SaveHotkey(s => s.RadialEnabled = value);
     partial void OnHotkeyChanged(HotkeyChoice value) => SaveHotkey(s => s.Hotkey = value);
