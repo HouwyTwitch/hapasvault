@@ -358,7 +358,7 @@
                   </c:MorphShape>
                   <TextBlock Style="{StaticResource Headline.Emphasized}" TextAlignment="Center" Margin="0,24,0,8" Text="Мастер-пароль" />
                   <TextBlock Style="{StaticResource Body.Large}" TextAlignment="Center" Foreground="{DynamicResource OnSurfaceVariant}" Margin="0,0,0,24"
-                             Text="Он открывает хранилище. Забытый пароль можно заменить только восстановлением из 24 слов." />
+                             Text="Он открывает хранилище. Восстановить забытый пароль нельзя: по 24 словам можно начать заново, но записи пропадут — даже резервная копия открывается только им." />
                   <StackPanel c:A.Shake="{Binding Shake}">
                     <c:PasswordField Label="Мастер-пароль" Password="{Binding Password}" Error="{Binding PasswordError}" c:A.FocusOnLoad="True" />
                     <c:WavyProgress Margin="4,12,4,0" Value="{Binding StrengthValue}" Foreground="{Binding Strength, Converter={StaticResource StrengthBrush}}"
@@ -503,7 +503,7 @@
           <DockPanel>
             <c:Icon Data="{StaticResource Icon.Warning}" Foreground="{DynamicResource OnErrorContainer}" Margin="0,0,12,0" VerticalAlignment="Top" />
             <TextBlock Style="{StaticResource Body.Medium}" Foreground="{DynamicResource OnErrorContainer}"
-                       Text="На этом компьютере нет второй половины ключа: файл ключа ПК утерян или создан заново. Откройте хранилище на компьютере, где его настраивали, или сбросьте токен кнопкой на устройстве и восстановите из 24 слов." />
+                       Text="На этом компьютере нет второй половины ключа: файл ключа ПК утерян или создан заново. Откройте хранилище на компьютере, где его настраивали, или привяжите этот ПК заново по 24 словам: на другом компьютере отвяжите его (Настройки → Компьютеры этого токена) и подключите токен сюда." />
           </DockPanel>
         </Border>
       </StackPanel>
