@@ -97,15 +97,32 @@ static int attach_connect(pmapi *h)
     return rc == PMC_E_NOT_PAIRED ? 0 : rc;
 }
 
+/* Симулятор (тестовый токен на 127.0.0.1) — только в предрелизных и локальных сборках:
+ * любой локальный процесс может слушать этот порт и выдать себя за токен. В стабильной
+ * сборке (PM_NO_SIMULATOR) символ остаётся для таблицы P/Invoke, но сокет не открывается. */
+int pmapi_has_simulator(void)
+{
+#ifdef PM_NO_SIMULATOR
+    return 0;
+#else
+    return 1;
+#endif
+}
+
 int pmapi_attach(pmapi *h, uint16_t port)
 {
     pmapi_detach(h);
+#ifdef PM_NO_SIMULATOR
+    (void)port;
+    return PMC_E_NO_DEVICE;
+#else
     h->sock = pm_net_connect("127.0.0.1", port);
     if (h->sock == PM_BAD_SOCK) return PMC_E_IO;
     /* токен отвечает за миллисекунды; молчание = занят другим клиентом или завис */
     pm_net_set_timeout(h->sock, PMAPI_IO_TIMEOUT_MS);
     h->transport = T_TCP;
     return io(h, attach_connect(h));
+#endif
 }
 
 int pmapi_find_usb(char *path, size_t cap) { return pm_serial_find(path, cap); }

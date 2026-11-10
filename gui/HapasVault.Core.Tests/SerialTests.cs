@@ -60,4 +60,26 @@ public class SerialTests
         await c.AttachAsync();
         Assert.Equal(TokenTransport.Simulator, c.Transport);
     }
+
+    [Fact]
+    public void SimulatorIsOptIn()
+    {
+        // тесты идут с pmapi, собранной с симулятором (PM_SIMULATOR=ON, как предрелизные сборки)
+        Assert.True(TokenClient.SimulatorAvailable);
+        Assert.Equal(TokenConnection.Auto, TokenClient.Effective(TokenConnection.Auto));
+        using var sim = new Sim();
+        using var c = new TokenClient(Path.Combine(sim.Dir, "default.id"));
+        Assert.Equal(TokenConnection.Usb, c.Connection);   // симулятор не выбирается сам
+    }
+
+    [Fact]
+    public async Task UsbDefaultDoesNotReachSimulator()
+    {
+        using var sim = new Sim();
+        if (TokenClient.FindUsb() != null) return;
+        using var c = new TokenClient(Path.Combine(sim.Dir, "default.id")) { Port = sim.Port };
+        var e = await Assert.ThrowsAsync<TokenException>(c.AttachAsync);
+        Assert.Equal(TokenError.Disconnected, e.Error);
+        Assert.Equal(TokenTransport.None, c.Transport);
+    }
 }

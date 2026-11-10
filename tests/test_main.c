@@ -1473,6 +1473,20 @@ static void test_otp_time_persist(void)
     hal_sim_advance_ms(86400u * 1000u);
     CHECK_RC(pmc_otp(&c, id, T + 86400, code, sizeof code, NULL, NULL), 0, "через сутки");
     CHECK(store_config_load(&cfg) == 0 && cfg.otp_time == T + 86400, "копия во flash обновилась");
+
+    section("аудит 7: ПК с часами на год вперёд не запрещает коды на настоящее время");
+    const uint64_t now = T + 2 * 86400;
+    reboot_token();
+    pmc_connect(&c);
+    pmc_unlock(&c, PW);
+    CHECK_RC(pmc_otp(&c, id, now + 365u * 86400u, code, sizeof code, NULL, NULL), 0,
+             "первый запрос после включения — любое будущее время (остаточный риск)");
+    CHECK(store_config_load(&cfg) == 0 && cfg.otp_time <= T + 86400 + 86400 + 60,
+          "во flash — не дальше суток вперёд от прежней копии");
+    reboot_token();
+    pmc_connect(&c);
+    pmc_unlock(&c, PW);
+    CHECK_RC(pmc_otp(&c, id, now, code, sizeof code, NULL, NULL), 0, "после перезагрузки настоящее время принимается");
     pmc_wipe(&c);
 }
 

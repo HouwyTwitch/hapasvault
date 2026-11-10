@@ -46,6 +46,8 @@ static uint64_t g_backoff_until;
 static uint64_t g_otp_time;      /* unix-секунды, 0 — ещё не было */
 static uint64_t g_otp_at;        /* hal_millis() в момент g_otp_time */
 static int      g_otp_live;      /* время уже принято после включения */
+static uint64_t g_otp_boot;      /* копия во flash на момент включения */
+static uint64_t g_boot_ms;       /* hal_millis() при включении */
 
 typedef struct { uint32_t t; uint8_t cmd, st; uint32_t id; } log_ent;
 static log_ent  g_log[TOKEN_LOG_SIZE];
@@ -101,8 +103,8 @@ void token_init(void)
     /* неверные пароли пережили перезагрузку: задержка действует и после неё */
     g_backoff_until = hal_millis() + backoff_ms(g_cfg.fails);
     g_last_activity = hal_millis();
-    g_otp_time = g_cfg.otp_time;          /* нижняя граница; вперёд — с первого запроса */
-    g_otp_at = hal_millis();
+    g_otp_time = g_otp_boot = g_cfg.otp_time;   /* нижняя граница; вперёд — с первого запроса */
+    g_otp_at = g_boot_ms = hal_millis();
     g_otp_live = 0;
     hal_led(LED_IDLE);
 }
@@ -282,10 +284,18 @@ static int otp_time_ok(uint64_t t)
         g_otp_at = now;
         g_otp_live = 1;
     }
-    /* грубая копия во flash: не чаще раза в сутки использования */
-    if (g_otp_time >= g_cfg.otp_time + TOKEN_OTP_SAVE_S) {
+    /* Грубая копия во flash: не чаще раза в сутки использования. За одно включение она
+     * уходит вперёд не больше чем на сутки плюс время работы: ПК с неверными часами
+     * (или вредонос) не может сдвинуть нижнюю границу на год и этим запретить коды
+     * на настоящее время на всех ПК. */
+    uint64_t keep = g_otp_time;
+    if (g_otp_boot) {
+        uint64_t cap = g_otp_boot + TOKEN_OTP_SAVE_S + (now - g_boot_ms) / 1000u;
+        if (keep > cap) keep = cap;
+    }
+    if (keep >= g_cfg.otp_time + TOKEN_OTP_SAVE_S) {
         uint64_t before = g_cfg.otp_time;
-        g_cfg.otp_time = g_otp_time;
+        g_cfg.otp_time = keep;
         if (store_config_save(&g_cfg) != 0) g_cfg.otp_time = before;
     }
     return 1;

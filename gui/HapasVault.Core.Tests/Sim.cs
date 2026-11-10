@@ -123,7 +123,11 @@ public sealed class Sim : IDisposable
     public TokenClient Client(string identity = "pc.id")
     {
         // профиль с кириллицей в пути: на Windows ловит открытие файла через ANSI
-        var c = new TokenClient(Path.Combine(Dir, "Профиль Иван", identity)) { Port = Port, SerialPath = PtyPath };
+        // по умолчанию клиент ищет только USB: симулятор — явным выбором
+        var c = new TokenClient(Path.Combine(Dir, "Профиль Иван", identity))
+        {
+            Port = Port, SerialPath = PtyPath, Connection = TokenConnection.Simulator,
+        };
         c.SetArgon(1024, 1);   // быстрее в тестах; на всех «ПК» теста одинаково
         return c;
     }

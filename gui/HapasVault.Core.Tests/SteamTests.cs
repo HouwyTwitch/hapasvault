@@ -23,6 +23,22 @@ public class SteamParseTests
             """;
     }
 
+    [Theory]
+    [InlineData("https://steamcommunity.com/login/settoken", true)]
+    [InlineData("https://store.steampowered.com/login/settoken", true)]
+    [InlineData("https://checkout.steampowered.com/login/settoken", true)]
+    [InlineData("https://help.steampowered.com/login/settoken", true)]
+    [InlineData("https://steam.tv/login/settoken", true)]
+    [InlineData("http://steamcommunity.com/login/settoken", false)]
+    [InlineData("https://evil.example/login/settoken", false)]
+    [InlineData("https://steamcommunity.com.evil.example/x", false)]
+    [InlineData("https://evilsteampowered.com/x", false)]
+    [InlineData("https://user@steamcommunity.com/x", false)]
+    [InlineData("https://steamcommunity.com:8443/x", false)]
+    [InlineData("/login/settoken", false)]
+    [InlineData("", false)]
+    public void TransferUrlsOnlySteam(string url, bool ok) => Assert.Equal(ok, SteamWeb.TransferUrlOk(url));
+
     [Fact]
     public void ReferenceKeyMatchesKnownVector()
     {
@@ -134,6 +150,8 @@ internal sealed class FakeSteam : HttpMessageHandler
     public List<(string Op, string[] Ids)> Responses { get; } = new();
     public int Logins { get; private set; }
     public int Finalizes { get; private set; }
+    /// <summary>Запросы не на https-адреса Steam (transfer_info с чужим адресом).</summary>
+    public int ForeignRequests { get; private set; }
     public bool ExpireOnce { get; set; }
     public int ResetsLeft { get; set; }
     public string? LastDevice { get; private set; }
@@ -178,6 +196,8 @@ internal sealed class FakeSteam : HttpMessageHandler
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
     {
         var uri = req.RequestUri!;
+        if (uri.Scheme != "https" || !(uri.Host.EndsWith("steampowered.com") || uri.Host == "steamcommunity.com"))
+            ForeignRequests++;
         var p = _rsa.ExportParameters(false);
         if (uri.Host == "api.steampowered.com" && ResetsLeft > 0)
         {
@@ -225,7 +245,11 @@ internal sealed class FakeSteam : HttpMessageHandler
                 Finalizes++;
                 return Json("{\"steamID\":\"" + SteamId + "\",\"transfer_info\":[" +
                             "{\"url\":\"https://steamcommunity.com/login/settoken\",\"params\":{\"nonce\":\"n1\",\"auth\":\"a1\"}}," +
-                            "{\"url\":\"https://store.steampowered.com/login/settoken\",\"params\":{\"nonce\":\"n2\",\"auth\":\"a2\"}}]}");
+                            "{\"url\":\"https://store.steampowered.com/login/settoken\",\"params\":{\"nonce\":\"n2\",\"auth\":\"a2\"}}," +
+                            // чужие адреса: параметры входа туда уходить не должны
+                            "{\"url\":\"https://evil.example/login/settoken\",\"params\":{\"nonce\":\"n3\"}}," +
+                            "{\"url\":\"https://steamcommunity.com.evil.example/login/settoken\",\"params\":{\"nonce\":\"n4\"}}," +
+                            "{\"url\":\"http://steamcommunity.com/login/settoken\",\"params\":{\"nonce\":\"n5\"}}]}");
             }
             case "steamcommunity.com/login/settoken":
             {
@@ -352,6 +376,7 @@ public class SteamTokenTests
         using var web = new SteamWeb(steam, delay: (_, _) => Task.CompletedTask);
         Assert.Equal(2, (await new SteamConfirmer(c, id, web, store).ListAsync()).Count);
         Assert.Equal((0, 1), (steam.Logins, steam.Finalizes));        // сессия из maFile: cookie по refresh token, без входа
+        Assert.Equal(0, steam.ForeignRequests);                       // transfer_info с чужими адресами пропущен
         Assert.Equal("android:mafile-device", steam.LastDevice);      // device_id из maFile, а не вычисленный
         Assert.Equal("RT0", store.Items[id].RefreshToken);
     }

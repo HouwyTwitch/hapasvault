@@ -25,7 +25,8 @@
 #  define PMAPI __attribute__((visibility("default")))
 #endif
 
-#define PMAPI_VERSION 8   /* 8: до 4 токенов на ПК и 4 ПК на токен; 7: бэкап частями */
+#define PMAPI_VERSION 9   /* 9: pmapi_has_simulator, протокол 6 (эпоха привязки);
+                             8: до 4 токенов на ПК и 4 ПК на токен; 7: бэкап частями */
 
 typedef struct pmapi pmapi;
 
@@ -49,8 +50,12 @@ PMAPI int     pmapi_is_paired(const pmapi *h);
 PMAPI int     pmapi_has_key(const pmapi *h);
 PMAPI void    pmapi_set_argon(pmapi *h, uint32_t kib, uint32_t passes);
 
-/* Транспорт: подключиться к токену (127.0.0.1:port) и, если ПК сопряжён,
- * установить сессию. detach = «выдернуть токен», хранилище блокируется. */
+/* 1 — в библиотеке есть транспорт симулятора (предрелизные и локальные сборки),
+ * 0 — стабильная сборка (CMake -DPM_SIMULATOR=OFF): только USB. */
+PMAPI int     pmapi_has_simulator(void);
+/* Транспорт: подключиться к симулятору (127.0.0.1:port) и, если ПК сопряжён,
+ * установить сессию. detach = «выдернуть токен», хранилище блокируется.
+ * Без симулятора — сразу PMC_E_NO_DEVICE, сокет не открывается. */
 PMAPI int     pmapi_attach(pmapi *h, uint16_t port);
 /* Настоящий токен по USB: найти по VID/PID и подключиться.
  * PMC_E_NO_DEVICE — не подключён, PMC_E_BUSY — порт занят другой программой. */

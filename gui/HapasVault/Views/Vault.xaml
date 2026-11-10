@@ -594,7 +594,8 @@
         <Border Style="{StaticResource SettingRow}">
           <DockPanel>
             <StackPanel DockPanel.Dock="Right" VerticalAlignment="Top" HorizontalAlignment="Right">
-              <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                          Visibility="{Binding SimulatorAvailable, Converter={StaticResource VisibleWhen}}">
                 <RadioButton Style="{StaticResource Connected}" c:A.Position="First" Content="Авто"
                              IsChecked="{Binding Connection, Converter={StaticResource Equals}, ConverterParameter=Auto}" />
                 <RadioButton Style="{StaticResource Connected}" c:A.Position="Middle" Content="USB"
@@ -612,7 +613,10 @@
             <StackPanel VerticalAlignment="Center">
               <TextBlock Style="{StaticResource SettingTitle}" Text="Подключение" />
               <TextBlock Style="{StaticResource SettingHint}" Text="{Binding TokenText}" />
-              <TextBlock Style="{StaticResource SettingHint}" Text="Авто: USB-токен, если подключён, иначе симулятор на 127.0.0.1" />
+              <TextBlock Style="{StaticResource SettingHint}" Text="Авто: USB-токен, если подключён, иначе симулятор на 127.0.0.1"
+                         Visibility="{Binding SimulatorAvailable, Converter={StaticResource VisibleWhen}}" />
+              <TextBlock Style="{StaticResource SettingHint}" Text="Токен подключается по USB"
+                         Visibility="{Binding SimulatorAvailable, Converter={StaticResource VisibleWhen}, ConverterParameter=invert}" />
             </StackPanel>
           </DockPanel>
         </Border>

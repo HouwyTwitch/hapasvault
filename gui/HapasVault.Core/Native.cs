@@ -30,6 +30,7 @@ internal static unsafe partial class Native
     [LibraryImport(Lib)] internal static partial int pmapi_has_key(nint h);
     [LibraryImport(Lib)] internal static partial void pmapi_set_argon(nint h, uint kib, uint passes);
 
+    [LibraryImport(Lib)] internal static partial int pmapi_has_simulator();
     [LibraryImport(Lib)] internal static partial int pmapi_attach(nint h, ushort port);
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)] internal static partial int pmapi_pair_words(nint h, string words);
     [LibraryImport(Lib)] internal static partial int pmapi_who(nint h, byte* id, out int setup, out int pcs);

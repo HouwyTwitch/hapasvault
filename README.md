@@ -226,7 +226,10 @@ gh attestation verify HapasVault-1.0.72-win64.zip -R HouwyTwitch/hapasvault
 ## Для разработчиков
 
 * [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — сборка, тесты, эмулятор
-  прошивки, CI и релизы;
+  прошивки, CI и релизы. Виртуальный токен (`pmtoken_sim`) — только для
+  разработки: он есть в локальной сборке (CMake-опция `PM_SIMULATOR`, по
+  умолчанию `ON`) и в предрелизе `dev`, а стабильные выпуски собираются с
+  `-DPM_SIMULATOR=OFF` и подключаются только к плате по USB;
 * [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) — ключи, протокол, разметка
   flash, политики токена;
 * [SECURITY.md](SECURITY.md) — модель угроз и результаты аудита.
