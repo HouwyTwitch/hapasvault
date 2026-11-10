@@ -47,13 +47,15 @@ void pm_vault_key(uint8_t k_vault[32], const uint8_t k_token[32],
 }
 
 void pm_pair_proof(uint8_t proof[32], const uint8_t k_token[32],
-                   const uint8_t pc_pub[32], const uint8_t token_pub[32])
+                   const uint8_t pc_pub[32], const uint8_t token_pub[32], uint32_t epoch)
 {
-    static const char tag[] = "pmtoken pair v1";
+    static const char tag[] = "pmtoken pair v2";
+    uint8_t ep[4] = {(uint8_t)epoch, (uint8_t)(epoch >> 8), (uint8_t)(epoch >> 16), (uint8_t)(epoch >> 24)};
     crypto_blake2b_ctx ctx;
     crypto_blake2b_keyed_init(&ctx, 32, k_token, 32);
     crypto_blake2b_update(&ctx, (const uint8_t *)tag, sizeof tag - 1);
     crypto_blake2b_update(&ctx, pc_pub, 32);
     crypto_blake2b_update(&ctx, token_pub, 32);
+    crypto_blake2b_update(&ctx, ep, 4);
     crypto_blake2b_final(&ctx, proof);
 }

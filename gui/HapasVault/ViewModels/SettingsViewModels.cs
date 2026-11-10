@@ -117,7 +117,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         SteamProxy = s.SteamProxy;
         CloseToTray = s.CloseToTray;
         StartWithWindows = !_shell.IsDemo && Platform.Autostart.IsEnabled;
-        Connection = s.Connection;
+        Connection = TokenClient.Effective(s.Connection);
         _loading = false;
         shell.PropertyChanged += (_, e) =>
         {
@@ -247,7 +247,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _steamStatus = "Подтверждения Steam идут на steamcommunity.com, вход — через api.steampowered.com";
     [ObservableProperty] private bool _steamChecking;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(ShowPort))] private TokenConnection _connection;
-    public bool ShowPort => Connection != TokenConnection.Usb;
+    /// <summary>Выбор «Авто / USB / Симулятор» — только в сборках с симулятором.</summary>
+    public bool SimulatorAvailable => TokenClient.SimulatorAvailable;
+    public bool ShowPort => SimulatorAvailable && Connection != TokenConnection.Usb;
 
     private static uint ToArgb(Color c) => (uint)(c.A << 24 | c.R << 16 | c.G << 8 | c.B);
 

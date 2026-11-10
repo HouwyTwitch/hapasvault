@@ -22,9 +22,12 @@ void pm_vault_key(uint8_t k_vault[32], const uint8_t k_token[32],
                   const uint8_t k_pc[32], const uint8_t pw_hash[32]);
 
 /* Привязка ещё одного ПК к настроенному токену: ПК, знающий 24 слова (а значит K_token),
- * подписывает свой ключ: BLAKE2b(key = K_token, "pmtoken pair v1" || pc_pub || token_pub). */
+ * подписывает свой ключ:
+ *   BLAKE2b(key = K_token, "pmtoken pair v2" || pc_pub || token_pub || u32 le epoch).
+ * epoch — эпоха привязки токена (FR_WHO), растёт при каждой отвязке ПК: записанный
+ * когда-то кадр привязки после отвязки уже не подходит. */
 void pm_pair_proof(uint8_t proof[32], const uint8_t k_token[32],
-                   const uint8_t pc_pub[32], const uint8_t token_pub[32]);
+                   const uint8_t pc_pub[32], const uint8_t token_pub[32], uint32_t epoch);
 
 
 #endif

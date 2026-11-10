@@ -50,6 +50,17 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
+**Симулятор в pmapi.** Опция `PM_SIMULATOR` (по умолчанию `ON`) включает в
+`pmapi` транспорт симулятора — подключение к тестовому токену на 127.0.0.1.
+Он нужен тестам C и C# и есть в локальных и предрелизных (`dev`) сборках.
+Стабильные выпуски собираются с `-DPM_SIMULATOR=OFF`: `pmapi_attach` сразу
+возвращает «нет устройства» и не открывает сокет, `pmapi_has_simulator()`
+возвращает 0, программа показывает только USB. Проверка такой сборки:
+```
+cmake -S . -B build-nosim -DPM_SIMULATOR=OFF && cmake --build build-nosim -j --target pmapi pmnosim
+ctest --test-dir build-nosim -R pmnosim --output-on-failure
+```
+
 **Visual Studio 2022+** (Developer PowerShell):
 ```
 cmake -S . -B build
@@ -119,8 +130,9 @@ pmcli
 `token_flash.bin` и `pmclient.id`, запустите заново, `pair`, затем
 `restore vault.bak`.
 
-С программой: запустите `tools\pmtoken_sim.exe`, затем `HapasVault.exe` — он
-найдёт виртуальный токен (режим подключения «Авто»).
+С программой (только локальная или предрелизная сборка — в стабильных выпусках
+симулятора нет): запустите `tools\pmtoken_sim.exe`, затем `HapasVault.exe` и в
+настройках выберите подключение «Симулятор» или «Авто» (по умолчанию — только USB).
 
 ## CI и релизы
 
@@ -139,6 +151,12 @@ GitHub Actions (`.github/workflows/build.yml`) на каждый push:
 | push в `main` | `v<VERSION>.<номер сборки>`, помечается последним |
 | push тега `v1.2.3` | `v1.2.3` |
 | push в любую другую ветку | предрелиз `dev` — всегда последняя сборка, перезаписывается |
+
+Стабильные релизы (`main` и теги) собираются с `pmapi.dll` без симулятора
+(`-DPM_SIMULATOR=OFF`) и без `pmtoken_sim.exe` и `pmcli.exe` в архиве; тесты
+при этом идут со сборкой с симулятором. Предрелиз `dev` включает симулятор.
+Действия GitHub закреплены по SHA коммита (обновляет Dependabot), pico-sdk —
+по коммиту, который проверяется после клонирования.
 
 Мажорная и минорная версии — в файле `VERSION`. Каждый файл релиза получает
 подписанную через Sigstore запись о происхождении (SLSA provenance). Если в

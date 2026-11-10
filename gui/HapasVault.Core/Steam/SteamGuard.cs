@@ -363,7 +363,8 @@ public sealed class SteamWeb : ISteamWeb, IDisposable
             foreach (var t in transfers.EnumerateArray())
             {
                 string url = JStr(t, "url");
-                if (url.Length == 0 || !t.TryGetProperty("params", out var prm) || prm.ValueKind != JsonValueKind.Object) continue;
+                // параметры входа (nonce/auth) уходят только на https-адреса Steam
+                if (!TransferUrlOk(url) || !t.TryGetProperty("params", out var prm) || prm.ValueKind != JsonValueKind.Object) continue;
                 var form = prm.EnumerateObject().Select(x => new KeyValuePair<string, string>(x.Name,
                     x.Value.ValueKind == JsonValueKind.String ? x.Value.GetString() ?? "" : x.Value.GetRawText())).ToList();
                 if (finSteamId.Length > 0) form.Add(new("steamID", finSteamId));
@@ -384,6 +385,18 @@ public sealed class SteamWeb : ISteamWeb, IDisposable
             throw new SteamException("Steam не выдал cookie сообщества (steamLoginSecure). Попробуйте позже.", needsLogin: true);
         string jwt = secure[(secure.IndexOf("||", StringComparison.Ordinal) + 2)..];
         return s with { SteamId = steamId, AccessToken = jwt, AccessTokenAt = _clock(), SessionId = sessionId };
+    }
+
+    private static readonly string[] TransferHosts = ["steamcommunity.com", "steampowered.com", "steam.tv"];
+
+    /// <summary>Адрес из transfer_info: https и домен Steam (или его поддомен,
+    /// например store.steampowered.com, checkout.steampowered.com).</summary>
+    internal static bool TransferUrlOk(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || u.Scheme != Uri.UriSchemeHttps) return false;
+        if (u.UserInfo.Length > 0 || !u.IsDefaultPort) return false;
+        string host = u.IdnHost.ToLowerInvariant();
+        return TransferHosts.Any(h => host == h || host.EndsWith("." + h, StringComparison.Ordinal));
     }
 
     public Task<SteamSession> RefreshAsync(SteamSession s, CancellationToken ct = default)

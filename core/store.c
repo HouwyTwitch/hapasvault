@@ -6,7 +6,8 @@
 
 #define CFG_MAGIC   0x46434D50u   /* "PMCF" */
 #define VLT_MAGIC   0x54564D50u   /* "PMVT" */
-#define CFG_VERSION 4   /* 4: до 4 привязанных ПК с именами; 3: размер слота; 2: счётчик неверных паролей */
+#define CFG_VERSION 5   /* 5: эпоха привязки, время OTP; 4: до 4 привязанных ПК с именами;
+                           3: размер слота; 2: счётчик неверных паролей */
 
 /* Заголовок слота хранилища:
  *   0  magic   u32
@@ -52,12 +53,16 @@ uint32_t store_slot_offset(int slot) { return slot_off(slot); }
 /* ---------------- конфигурация ---------------- */
 
 /* v1..v3: [magic][ver][seq][flags][token_sk 32][pc_pub 32][k_token 32][fails][slot]
- * v4:     [magic][ver][seq][flags][token_sk 32][k_token 32][fails][slot][n][4 × (pub 32, label 32)] */
+ * v4:     [magic][ver][seq][flags][token_sk 32][k_token 32][fails][slot][n][4 × (pub 32, label 32)]
+ * v5:     v4 + [u32 pair_epoch][u64 otp_time] */
 #define CFG_BODY_V1 106   /* 4 magic + 1 ver + 4 seq + 1 flags + 32*3 */
 #define CFG_BODY_V2 110   /* + u32 fails */
 #define CFG_BODY_V3 114   /* + u32 размер слота */
 #define CFG_PC_AT   83
-#define CFG_BODY    (CFG_PC_AT + STORE_MAX_PCS * (32 + STORE_PC_LABEL))
+#define CFG_BODY_V4 (CFG_PC_AT + STORE_MAX_PCS * (32 + STORE_PC_LABEL))
+#define CFG_EPOCH_AT CFG_BODY_V4
+#define CFG_OTP_AT  (CFG_EPOCH_AT + 4)
+#define CFG_BODY    (CFG_OTP_AT + 8)
 
 static void cfg_serialize(const pm_config *c, uint8_t *b)
 {
@@ -80,18 +85,22 @@ static void cfg_serialize(const pm_config *c, uint8_t *b)
             e[32 + STORE_PC_LABEL - 1] = 0;
         }
     }
+    put32(b + CFG_EPOCH_AT, c->pair_epoch);
+    put32(b + CFG_OTP_AT, (uint32_t)c->otp_time);
+    put32(b + CFG_OTP_AT + 4, (uint32_t)(c->otp_time >> 32));
     crypto_blake2b(b + CFG_BODY, 32, b, CFG_BODY);
 }
 
-/* legacy: 1 — разобрать старые версии (1, 2) из старой разметки; 0 — новую (3 — прошлый
- * выпуск, 4 — текущий). Единственный ПК старых версий становится pcs[0]. */
+/* legacy: 1 — разобрать старые версии (1, 2) из старой разметки; 0 — новую (3, 4 — прошлые
+ * выпуски, 5 — текущий). Единственный ПК старых версий становится pcs[0]. */
 static int cfg_parse(const uint8_t *b, pm_config *c, int legacy, uint32_t *slot)
 {
     uint8_t chk[32];
     uint8_t v = b[4];
     if (get32(b) != CFG_MAGIC) return -1;
-    if (legacy ? (v != 1 && v != 2) : (v != 3 && v != CFG_VERSION)) return -1;
-    size_t body = v == 1 ? CFG_BODY_V1 : v == 2 ? CFG_BODY_V2 : v == 3 ? CFG_BODY_V3 : CFG_BODY;
+    if (legacy ? (v != 1 && v != 2) : (v < 3 || v > CFG_VERSION)) return -1;
+    size_t body = v == 1 ? CFG_BODY_V1 : v == 2 ? CFG_BODY_V2 : v == 3 ? CFG_BODY_V3 :
+                  v == 4 ? CFG_BODY_V4 : CFG_BODY;
     crypto_blake2b(chk, 32, b, body);
     if (crypto_verify32(chk, b + body) != 0) return -1;
     memset(c, 0, sizeof *c);
@@ -118,6 +127,10 @@ static int cfg_parse(const uint8_t *b, pm_config *c, int legacy, uint32_t *slot)
         memcpy(c->pcs[i].pub, e, 32);
         memcpy(c->pcs[i].label, e + 32, STORE_PC_LABEL);
         c->pcs[i].label[STORE_PC_LABEL - 1] = 0;
+    }
+    if (v >= 5) {                       /* v4: эпоха 0, времени OTP ещё нет */
+        c->pair_epoch = get32(b + CFG_EPOCH_AT);
+        c->otp_time = (uint64_t)get32(b + CFG_OTP_AT + 4) << 32 | get32(b + CFG_OTP_AT);
     }
     return 0;
 }

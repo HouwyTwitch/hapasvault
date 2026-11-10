@@ -32,7 +32,7 @@ public sealed partial class ShellViewModel : ObservableObject
         Settings = settings;
         Theme = theme;
         Token.Port = settings.Port;
-        Token.Connection = settings.Connection;
+        Token.Connection = TokenClient.Effective(settings.Connection);
 
         _poll.Tick += async (_, _) => await PollAsync();
         _idle.Tick += async (_, _) => await CheckIdleAsync();
@@ -395,6 +395,7 @@ public sealed partial class ShellViewModel : ObservableObject
 
     public async Task ChangeConnectionAsync(TokenConnection mode, ushort port)
     {
+        mode = TokenClient.Effective(mode);
         Settings.Port = port;
         Settings.Connection = mode;
         Settings.Save();

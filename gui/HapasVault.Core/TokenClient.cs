@@ -25,7 +25,8 @@ public sealed record TokenInfo(bool Paired, bool SetupDone, bool Unlocked, uint 
     }
 }
 
-/// <summary>Как искать токен.</summary>
+/// <summary>Как искать токен. Auto и Simulator — только в сборках с симулятором
+/// (<see cref="TokenClient.SimulatorAvailable"/>), иначе это то же, что Usb.</summary>
 public enum TokenConnection { Auto, Usb, Simulator }
 
 /// <summary>Через что подключены сейчас.</summary>
@@ -75,7 +76,8 @@ public sealed unsafe partial class TokenClient : ITokenClient
     }
 
     public ushort Port { get; set; } = DefaultPort;
-    public TokenConnection Connection { get; set; } = TokenConnection.Auto;
+    /// <summary>По умолчанию — только USB: симулятор включается явно (предрелизные сборки).</summary>
+    public TokenConnection Connection { get; set; } = TokenConnection.Usb;
     /// <summary>Явный последовательный порт вместо поиска по USB (тесты: pty симулятора).</summary>
     public string? SerialPath { get; set; }
     public TokenTransport Transport => (TokenTransport)Native.pmapi_transport(Handle);
@@ -88,6 +90,22 @@ public sealed unsafe partial class TokenClient : ITokenClient
     }
 
     public static int NativeVersion => Native.pmapi_version();
+
+    private static readonly Lazy<bool> _simulator = new(() =>
+    {
+        try { return Native.pmapi_has_simulator() != 0; }
+        catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException) { return false; }
+    });
+
+    /// <summary>
+    /// Есть ли в pmapi транспорт симулятора (тестовый токен на 127.0.0.1). В стабильных
+    /// выпусках его нет: любой локальный процесс мог бы слушать порт и выдать себя за токен.
+    /// </summary>
+    public static bool SimulatorAvailable => _simulator.Value;
+
+    /// <summary>Режим, который действует в этой сборке: без симулятора — всегда USB.</summary>
+    public static TokenConnection Effective(TokenConnection mode) =>
+        SimulatorAvailable ? mode : TokenConnection.Usb;
 
     public bool IsPaired => Native.pmapi_is_paired(Handle) != 0;
     public bool HasKey => Native.pmapi_has_key(Handle) != 0;
@@ -114,13 +132,15 @@ public sealed unsafe partial class TokenClient : ITokenClient
         ushort port = Port;
         var mode = Connection;
         string? serial = SerialPath;
+        bool sim = SimulatorAvailable;
         return Call(h =>
         {
             if (serial != null) return Native.pmapi_attach_serial(h, serial);
-            if (mode == TokenConnection.Simulator) return Native.pmapi_attach(h, port);
+            // без симулятора в сборке: «Симулятор» — нет устройства, «Авто» — то же, что USB
+            if (mode == TokenConnection.Simulator) return sim ? Native.pmapi_attach(h, port) : TokenException.NoDeviceCode;
             int rc = Native.pmapi_attach_usb(h);
             // «Авто»: нет USB-токена — пробуем симулятор
-            return rc == TokenException.NoDeviceCode && mode == TokenConnection.Auto ? Native.pmapi_attach(h, port) : rc;
+            return rc == TokenException.NoDeviceCode && mode == TokenConnection.Auto && sim ? Native.pmapi_attach(h, port) : rc;
         }, connecting: true);
     }
 

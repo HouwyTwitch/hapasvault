@@ -28,8 +28,9 @@ public sealed class AppSettings
     public bool ClearClipboard { get; set; } = true;
     public int ClipboardSeconds { get; set; } = 30;
     public ushort Port { get; set; } = 47123;
-    /// <summary>Авто: USB-токен, если подключён, иначе симулятор.</summary>
-    public TokenConnection Connection { get; set; } = TokenConnection.Auto;
+    /// <summary>USB по умолчанию. Авто (USB, иначе симулятор) и Симулятор — только в сборках
+    /// с симулятором; в стабильных выпусках сохранённое значение читается как USB.</summary>
+    public TokenConnection Connection { get; set; } = TokenConnection.Usb;
     public bool RadialEnabled { get; set; } = true;
     public HotkeyChoice Hotkey { get; set; } = HotkeyChoice.CtrlAltSpace;
     /// <summary>Нажимать Enter после автоввода пароля.</summary>
@@ -55,7 +56,11 @@ public sealed class AppSettings
         try
         {
             if (File.Exists(FilePath))
-                return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), Json) ?? new AppSettings();
+            {
+                var s = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), Json) ?? new AppSettings();
+                s.Connection = TokenClient.Effective(s.Connection);   // нет симулятора — только USB
+                return s;
+            }
         }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
         {

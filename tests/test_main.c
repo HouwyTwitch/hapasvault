@@ -1172,6 +1172,342 @@ static void test_old_firmware(void)
     pmc_wipe(&c);
 }
 
+/* ---------------- исправления по аудиту ---------------- */
+
+/* Настроенный токен на чистой плате; words — 24 слова, kv — ключ хранилища. */
+static void setup_with_words(pm_client *c, char *words, size_t cap, uint8_t kv[32])
+{
+    hal_sim_open(NULL);
+    token_init();
+    new_client(c);
+    pmc_pair(c);
+    pmc_connect(c);
+    uint8_t seed[32], k_token[32], k_pc[32], salt[16], pw_hash[32];
+    pmc_setup_begin(c, words, cap);
+    bip39_decode(words, seed);
+    pm_keys_from_seed(seed, k_token, k_pc);
+    pmc_setup_commit(c, PW);
+    pm_salt_from_kpc(k_pc, salt);
+    void *work = malloc((size_t)c->argon_blocks * 1024u);
+    crypto_argon2_config cfg = {CRYPTO_ARGON2_ID, c->argon_blocks, c->argon_passes, 1};
+    crypto_argon2_inputs in = {(const uint8_t *)PW, salt, (uint32_t)strlen(PW), 16};
+    crypto_argon2(pw_hash, 32, work, cfg, in, crypto_argon2_no_extras);
+    free(work);
+    pm_vault_key(kv, k_token, k_pc, pw_hash);
+}
+
+static uint32_t cfg_fails(void)
+{
+    pm_config cfg;
+    return store_config_load(&cfg) == 0 ? cfg.fails : 0xFFFFFFFFu;
+}
+
+/* Хранилище, собранное руками: одна запись с полем OTP длиной 255 (больше OTP_BLOB_MAX). */
+static size_t crafted_vault(uint8_t *v)
+{
+    size_t n = 0;
+    v[n++] = 1; v[n++] = 0;                       /* count */
+    wire_put32(v + n, 2u | 2u << 24); n += 4;     /* next_id, формат v2 */
+    wire_put32(v + n, 1); n += 4;                 /* id */
+    v[n++] = 0;                                   /* cat */
+    v[n++] = 1; v[n++] = 'x';                     /* name */
+    v[n++] = 0;                                   /* login */
+    v[n++] = 0; v[n++] = 0;                       /* пароль */
+    v[n++] = 255;                                 /* otp_len */
+    v[n++] = OTP_TOTP; v[n++] = PM_SHA1; v[n++] = 6; v[n++] = 30;
+    memset(v + n, 'A', 251); n += 251;
+    return n;
+}
+
+static void test_crafted_backup(void)
+{
+    pm_client c;
+    char words[512];
+    uint8_t kv[32];
+    static uint8_t plain[1024], blob[2048];
+
+    section("аудит 2: хранилище с полем OTP длиннее буфера");
+    setup_with_words(&c, words, sizeof words, kv);
+    size_t n = crafted_vault(plain);
+    CHECK(store_vault_save(kv, plain, n) == 0, "подложили собранное руками хранилище");
+    size_t total = 0;
+    long bl = store_vault_raw(0, blob, sizeof blob, &total);
+    CHECK(bl > 0 && (size_t)bl == total, "его сырая копия");
+    reboot_token();
+    pmc_connect(&c);
+    for (int i = 0; i < 4; i++) CHECK_RC(pmc_unlock(&c, PW), ST_FLASH, "unlock: хранилище отвергнуто");
+    CHECK(cfg_fails() == 0, "это не неверный пароль: счётчик не растёт");
+    CHECK(store_vault_exists(), "и ничего не стёрто");
+
+    token_disconnect();
+    hal_sim_erase();
+    token_init();
+    new_client(&c);
+    pmc_pair(&c);
+    pmc_connect(&c);
+    CHECK_RC(pmc_restore(&c, words, PW, blob, (size_t)bl), ST_BAD_ARGS, "restore такого бэкапа — отказ");
+    pmc_info_t info;
+    CHECK_RC(pmc_info(&c, &info), 0, "info");
+    CHECK(!info.setup_done && !info.unlocked, "токен остался не настроенным");
+    CHECK(!store_vault_exists(), "отвергнутый бэкап не остался во flash");
+    CHECK_RC(pmc_restore(&c, words, PW, NULL, 0), 0, "после отказа можно восстановить заново");
+    pmc_wipe(&c);
+}
+
+static int g_rec_n;
+static uint8_t g_rec[65];
+static long rec_xfer(void *ctx, const uint8_t *req, size_t len, uint8_t *resp, size_t cap)
+{
+    if (len == 65 && req[0] == FR_PAIR_PROOF) { memcpy(g_rec, req, 65); g_rec_n++; }
+    return direct_xfer(ctx, req, len, resp, cap);
+}
+
+/* прошивка протокола 5: WHO из 35 байт, без эпохи */
+static long proto5_xfer(void *ctx, const uint8_t *req, size_t req_len, uint8_t *resp, size_t cap)
+{
+    (void)ctx; (void)req_len; (void)cap;
+    if (req[0] != FR_WHO) { resp[0] = FR_ERROR; resp[1] = FE_BAD_FRAME; return 2; }
+    resp[0] = FR_WHO;
+    memset(resp + 1, 0x11, 32);
+    resp[33] = 1; resp[34] = 1;
+    return 35;
+}
+
+static void test_pair_replay(void)
+{
+    pm_client a, b;
+    char words[512];
+    uint8_t kv[32];
+
+    section("аудит 3: повтор записанной подписи привязки после отвязки");
+    setup_with_words(&a, words, sizeof words, kv);
+    pmc_init(&b, rec_xfer, NULL);
+    b.argon_blocks = 64; b.argon_passes = 1;
+    g_rec_n = 0;
+    CHECK_RC(pmc_pair_words(&b, words), 0, "B привязан по словам");
+    CHECK(g_rec_n == 1, "кадр привязки B записан");
+    CHECK_RC(pmc_connect(&a), 0, "A");
+    CHECK_RC(pmc_unlock(&a, PW), 0, "A unlock");
+    CHECK_RC(pmc_pc_remove(&a, 1), 0, "A отвязывает B");
+    pm_config cfg;
+    CHECK(store_config_load(&cfg) == 0 && cfg.pair_epoch == 1, "эпоха привязки выросла и записана");
+    uint8_t out[64];
+    size_t on = token_handle(g_rec, 65, out, sizeof out);
+    CHECK(on == 2 && out[0] == FR_ERROR && out[1] == FE_BAD_PROOF, "повтор старого кадра — FE_BAD_PROOF");
+    CHECK_RC(pmc_connect(&b), PMC_E_TOKEN - FE_NOT_PAIRED, "B по-прежнему не привязан");
+    reboot_token();
+    on = token_handle(g_rec, 65, out, sizeof out);
+    CHECK(on == 2 && out[1] == FE_BAD_PROOF, "и после перезагрузки");
+    hal_sim_advance_ms(1100);
+    CHECK_RC(pmc_pair_words(&b, words), 0, "B заново по 24 словам — можно");
+    CHECK_RC(pmc_connect(&b), 0, "B: сессия");
+    CHECK_RC(pmc_unlock(&b, PW), 0, "B: unlock");
+
+    section("конфигурация v4 читается: эпоха 0");
+    {
+        /* текущая копия конфигурации -> формат v4 (без эпохи и времени OTP) */
+        uint8_t *f = hal_sim_flash();
+        uint32_t base = hal_flash_size() - STORE_CFG_BYTES;
+        pm_config cur;
+        store_config_load(&cur);
+        uint8_t *src = NULL;
+        for (int i = 0; i < 2; i++)
+            if ((f[base + i * STORE_SECTOR + 5] | f[base + i * STORE_SECTOR + 6] << 8) == (int)(cur.seq & 0xFFFF))
+                src = f + base + i * STORE_SECTOR;
+        CHECK(src != NULL && src[4] == 5, "текущая версия конфигурации — 5");
+        static uint8_t sec[STORE_SECTOR];
+        const size_t v4 = 83 + STORE_MAX_PCS * 64;
+        memset(sec, 0xFF, sizeof sec);
+        memcpy(sec, src, v4);
+        sec[4] = 4;
+        crypto_blake2b(sec + v4, 32, sec, v4);
+        memcpy(f + base, sec, STORE_SECTOR);
+        memcpy(f + base + STORE_SECTOR, sec, STORE_SECTOR);
+        reboot_token();
+        CHECK(store_config_load(&cfg) == 0 && cfg.pair_epoch == 0 && cfg.otp_time == 0 && cfg.pc_count == 2,
+              "v4: эпоха 0, ПК на месте");
+        CHECK_RC(pmc_connect(&a), 0, "A подключается к токену с конфигурацией v4");
+        CHECK_RC(pmc_unlock(&a, PW), 0, "и открывает хранилище");
+    }
+
+    section("прошивка протокола 5: «обновите»");
+    pm_client o;
+    pmc_init(&o, proto5_xfer, NULL);
+    uint8_t pk[32];
+    CHECK_RC(pmc_who(&o, pk, NULL, NULL), PMC_E_VERSION, "WHO без эпохи");
+    CHECK_RC(pmc_pair_words(&o, words), PMC_E_VERSION, "привязка по словам");
+    pmc_wipe(&a); pmc_wipe(&b); pmc_wipe(&o);
+}
+
+static void test_idle_who(void)
+{
+    pm_client c;
+    uint8_t kv[32];
+    pmc_info_t info;
+
+    section("аудит 4: открытые кадры WHO не продлевают простой");
+    fresh_vault(&c, kv);
+    CHECK_RC(pmc_info(&c, &info), 0, "info");
+    CHECK(info.unlocked, "открыт");
+    for (int i = 0; i < 15; i++) {
+        hal_sim_advance_ms(4u * 60u * 1000u);
+        uint8_t who = FR_WHO, out[64];
+        token_handle(&who, 1, out, sizeof out);
+        token_tick();
+    }
+    CHECK_RC(pmc_info(&c, &info), PMC_E_TOKEN - FE_NO_SESSION, "сессия закрыта по простою");
+    CHECK_RC(pmc_connect(&c), 0, "connect");
+    CHECK_RC(pmc_info(&c, &info), 0, "info");
+    CHECK(!info.unlocked, "хранилище заблокировано");
+    CHECK_RC(pmc_unlock(&c, PW), 0, "unlock");
+    hal_sim_advance_ms(4u * 60u * 1000u);
+    CHECK_RC(pmc_info(&c, &info), 0, "кадр сессии");
+    hal_sim_advance_ms(4u * 60u * 1000u);
+    token_tick();
+    CHECK_RC(pmc_info(&c, &info), 0, "кадры сессии простой продлевают");
+    pmc_wipe(&c);
+}
+
+/* Токен со взломанной прошивкой: знает ключи сессии, отвечает кадром длиннее буфера ПК. */
+static uint8_t g_fake_sk[32], g_fake_pk[32];
+static pm_session g_fake_sess;
+static long evil_xfer(void *ctx, const uint8_t *req, size_t len, uint8_t *resp, size_t cap)
+{
+    (void)ctx;
+    static uint8_t plain[PM_MAX_FRAME + 64];
+    switch (req[0]) {
+    case FR_PAIR:
+        resp[0] = FR_PAIR;
+        memcpy(resp + 1, g_fake_pk, 32);
+        return 33;
+    case FR_WHO:
+        resp[0] = FR_WHO;
+        memcpy(resp + 1, g_fake_pk, 32);
+        resp[33] = 0; resp[34] = 1;
+        wire_put32(resp + 35, 0);
+        return 39;
+    case FR_HELLO: {
+        if (len != 65) return -1;
+        uint8_t esk[32], epk[32];
+        hal_rng(esk, 32);
+        crypto_x25519_public_key(epk, esk);
+        pm_session_establish(&g_fake_sess, PM_RESPONDER, g_fake_sk, g_fake_pk, esk, epk, req + 1, req + 33);
+        resp[0] = FR_HELLO;
+        memcpy(resp + 1, epk, 32);
+        return 33;
+    }
+    case FR_DATA: {
+        size_t pl = cap - 1 - PM_MAC_LEN;           /* весь buf_in клиента */
+        memset(plain, 0, pl);
+        resp[0] = FR_DATA;
+        return (long)(1 + pm_session_seal(&g_fake_sess, resp + 1, plain, pl));
+    }
+    }
+    return -1;
+}
+
+static void test_evil_token(void)
+{
+    section("аудит 5: кадр длиннее буфера ПК от взломанного токена");
+    hal_rng(g_fake_sk, 32);
+    crypto_x25519_public_key(g_fake_pk, g_fake_sk);
+    pm_client c;
+    pmc_init(&c, evil_xfer, NULL);
+    CHECK_RC(pmc_pair(&c), 0, "pair с поддельным токеном");
+    CHECK(sizeof c.buf_in - 1 - PM_MAC_LEN > sizeof c.plain, "ответ больше буфера открытого текста");
+    CHECK_RC(pmc_connect(&c), PMC_E_PROTO, "connect: ошибка протокола, а не запись за буфер");
+    CHECK(!c.sess.active, "сессия сброшена");
+    pmc_wipe(&c);
+}
+
+static void test_fail_counter(void)
+{
+    pm_client c;
+    uint8_t kv[32];
+
+    section("аудит 6: после бесплатных попыток счётчик пишется до проверки");
+    fresh_vault(&c, kv);
+    pmc_lock(&c);
+    for (int i = 0; i < 3; i++) CHECK_RC(pmc_unlock(&c, "wrong"), ST_WRONG_KEY, "бесплатная попытка");
+    CHECK(cfg_fails() == 3, "во flash 3");
+    for (uint32_t k = 3; k < 6; k++) {
+        hal_sim_advance_ms(TOKEN_BACKOFF_MAX_MS);
+        CHECK_RC(pmc_unlock(&c, "wrong"), ST_WRONG_KEY, "неверный пароль");
+        CHECK(cfg_fails() == k + 1, "во flash N + 1");
+    }
+    reboot_token();
+    pmc_connect(&c);
+    CHECK_RC(pmc_unlock(&c, PW), ST_BACKOFF, "задержка пережила перезагрузку");
+    hal_sim_advance_ms(TOKEN_BACKOFF_MAX_MS);
+    CHECK_RC(pmc_unlock(&c, PW), 0, "верный пароль при fails >= 3");
+    CHECK(cfg_fails() == 0, "во flash 0");
+    pmc_wipe(&c);
+}
+
+static void test_otp_time_persist(void)
+{
+    pm_client c;
+    uint8_t kv[32];
+    char code[16];
+    const uint64_t T = 1800000000u;
+
+    section("аудит 7: нижняя граница времени OTP переживает выключение");
+    fresh_vault(&c, kv);
+    uint8_t b[80];
+    size_t l = otp_blob(b, OTP_TOTP, PM_SHA1, 6, 30, "12345678901234567890");
+    uint32_t id;
+    CHECK_RC(pmc_add_otp(&c, "", "TOTP", "u", "p", b, l, &id), 0, "запись с TOTP");
+    CHECK_RC(pmc_otp(&c, id, T, code, sizeof code, NULL, NULL), 0, "время T принято");
+    pm_config cfg;
+    CHECK(store_config_load(&cfg) == 0 && cfg.otp_time == T, "T записано во flash");
+    hal_sim_advance_ms(3600u * 1000u);
+    CHECK_RC(pmc_otp(&c, id, T + 3600, code, sizeof code, NULL, NULL), 0, "через час");
+    CHECK(store_config_load(&cfg) == 0 && cfg.otp_time == T, "раньше суток flash не переписывается");
+    reboot_token();
+    pmc_connect(&c);
+    pmc_unlock(&c, PW);
+    CHECK_RC(pmc_otp(&c, id, T - 86400, code, sizeof code, NULL, NULL), ST_BAD_TIME, "после перезагрузки T − сутки — отказ");
+    CHECK_RC(pmc_otp(&c, id, T - 60, code, sizeof code, NULL, NULL), 0, "в пределах допуска — можно");
+    CHECK_RC(pmc_otp(&c, id, T + 400, code, sizeof code, NULL, NULL), ST_BAD_TIME,
+             "после принятого времени — снова и правило «вперёд»");
+    hal_sim_advance_ms(86400u * 1000u);
+    CHECK_RC(pmc_otp(&c, id, T + 86400, code, sizeof code, NULL, NULL), 0, "через сутки");
+    CHECK(store_config_load(&cfg) == 0 && cfg.otp_time == T + 86400, "копия во flash обновилась");
+
+    section("аудит 7: ПК с часами на год вперёд не запрещает коды на настоящее время");
+    const uint64_t now = T + 2 * 86400;
+    reboot_token();
+    pmc_connect(&c);
+    pmc_unlock(&c, PW);
+    CHECK_RC(pmc_otp(&c, id, now + 365u * 86400u, code, sizeof code, NULL, NULL), 0,
+             "первый запрос после включения — любое будущее время (остаточный риск)");
+    CHECK(store_config_load(&cfg) == 0 && cfg.otp_time <= T + 86400 + 86400 + 60,
+          "во flash — не дальше суток вперёд от прежней копии");
+    reboot_token();
+    pmc_connect(&c);
+    pmc_unlock(&c, PW);
+    CHECK_RC(pmc_otp(&c, id, now, code, sizeof code, NULL, NULL), 0, "после перезагрузки настоящее время принимается");
+    pmc_wipe(&c);
+}
+
+static void test_label_rate(void)
+{
+    pm_client c;
+    uint8_t kv[32];
+
+    section("аудит 8: смена имени ПК ограничена по частоте");
+    fresh_vault(&c, kv);
+    pmc_lock(&c);
+    hal_sim_advance_ms(TOKEN_RATE_WINDOW_MS + 10);
+    const char *names[] = {"ПК 1", "ПК 2", "ПК 3", "ПК 4", "ПК 5"};
+    for (int i = 0; i < 4; i++) CHECK_RC(pmc_pc_label(&c, names[i]), 0, "имя (до unlock)");
+    CHECK_RC(pmc_pc_label(&c, names[3]), 0, "то же имя — без записи и без лимита");
+    CHECK_RC(pmc_pc_label(&c, names[4]), ST_RATE_LIMIT, "пятое подряд — отказ");
+    hal_sim_advance_ms(60000);
+    CHECK_RC(pmc_pc_label(&c, names[4]), 0, "через минуту — можно");
+    pmc_wipe(&c);
+}
+
 int main(int argc, char **argv)
 {
 #ifdef _WIN32
@@ -1192,6 +1528,13 @@ int main(int argc, char **argv)
     test_multi_pc();
     test_multi_token();
     test_old_firmware();
+    test_crafted_backup();
+    test_pair_replay();
+    test_idle_who();
+    test_evil_token();
+    test_fail_counter();
+    test_otp_time_persist();
+    test_label_rate();
     if (argc > 1 && !strcmp(argv[1], "--argon")) test_real_argon_cost();
     printf("\nИтого: %d пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

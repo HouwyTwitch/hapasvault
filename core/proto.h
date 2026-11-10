@@ -25,14 +25,18 @@
 #ifndef PM_PROTO_H
 #define PM_PROTO_H
 
-#define PM_PROTO_VERSION   5   /* 5: до 4 ПК на токен (привязка по 24 словам), WHO, HELLO с ключом ПК;
+#define PM_PROTO_VERSION   6   /* 6: эпоха привязки в WHO и в подписи привязки (повтор старой подписи
+                                      после отвязки ПК не проходит);
+                                   5: до 4 ПК на токен (привязка по 24 словам), WHO, HELLO с ключом ПК;
                                    4: ёмкость по RAM/flash, LIST страницами, бэкап частями;
                                    3: подтверждения Steam; 2: OTP, UPDATE, тип OTP в LIST */
 
 /* Типы кадров (открытые, до сессии):
  *   FR_WHO         -> [FR_WHO][token_pub 32][u8 флаги: 1 — настроен][u8 сколько ПК привязано]
+ *                     [u32 le эпоха привязки]   (39 байт; протокол 5 отвечал 35 байтами, без эпохи)
  *   FR_PAIR        [pc_pub 32] -> [token_pub 32]   первый ПК чистого (не настроенного) токена
  *   FR_PAIR_PROOF  [pc_pub 32][proof 32] -> [token_pub 32]   ещё один ПК, proof — kdf.h pm_pair_proof
+ *                     с эпохой из WHO; эпоха растёт при каждой отвязке ПК (CMD_PC_REMOVE)
  *   FR_HELLO       [pc_pub 32][epk 32] -> [epk 32]   сессия Noise KK с привязанным ПК */
 #define FR_PAIR       0x01
 #define FR_HELLO      0x02

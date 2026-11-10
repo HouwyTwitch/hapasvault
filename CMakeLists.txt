@@ -27,9 +27,16 @@ if(WIN32)
   target_link_libraries(pmclient PUBLIC ws2_32 bcrypt crypt32 setupapi advapi32)
 endif()
 
+# Транспорт симулятора в pmapi (тестовый токен на 127.0.0.1). OFF — стабильные выпуски:
+# любой локальный процесс мог бы выдать себя за токен на этом порту.
+option(PM_SIMULATOR "pmapi умеет подключаться к симулятору (предрелизные и локальные сборки)" ON)
+
 # C ABI для GUI (C# P/Invoke): pmapi.dll / pmapi.so (без "lib" и на MinGW)
 add_library(pmapi SHARED client/pmapi.c)
 target_link_libraries(pmapi PRIVATE pmclient)
+if(NOT PM_SIMULATOR)
+  target_compile_definitions(pmapi PRIVATE PM_NO_SIMULATOR)
+endif()
 set_target_properties(pmapi PROPERTIES C_VISIBILITY_PRESET hidden PREFIX "")
 if(UNIX AND NOT APPLE)
   target_link_options(pmapi PRIVATE -Wl,--exclude-libs,ALL)
@@ -60,3 +67,10 @@ add_executable(pmfuzz tests/fuzz_main.c sim/hal_sim.c)
 target_include_directories(pmfuzz PRIVATE sim)
 target_link_libraries(pmfuzz PRIVATE pmcore pmclient)
 add_test(NAME pmfuzz COMMAND pmfuzz 30000)
+
+# Сборка без симулятора: pmapi_attach не открывает сокет даже при слушателе на порту
+if(NOT PM_SIMULATOR)
+  add_executable(pmnosim tests/nosim_main.c)
+  target_link_libraries(pmnosim PRIVATE pmapi pmclient)
+  add_test(NAME pmnosim COMMAND pmnosim)
+endif()
