@@ -186,14 +186,17 @@ jobs:
           dotnet publish gui/HapasVault/HapasVault.csproj -c Release -r win-x64 --self-contained
           -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
           -p:EnableCompressionInSingleFile=true -p:DebugType=none -o publish
-          -p:PmNativeDir=${{ github.workspace }}/${{ env.STABLE == 'true' && 'build-nosim' || 'build' }}
+          -p:PmNativeDir=${{ github.workspace }}/${{ env.STABLE == 'true' && 'build-nosim/' || 'build/' }}
           -p:Version=${{ steps.ver.outputs.version }}
           -p:InformationalVersion=${{ steps.ver.outputs.version }}+${{ github.sha }}
 
-      - name: Check published pmapi.dll (stable)
-        if: env.STABLE == 'true'
+      # PmNativeDir из командной строки — глобальное свойство: Directory.Build.props не
+      # добавит к нему «/», и без него csproj молча не найдёт pmapi.dll
+      - name: Check published pmapi.dll
         shell: pwsh
         run: |
+          if (-not (Test-Path publish/pmapi.dll)) { throw "publish/pmapi.dll нет: проверьте PmNativeDir" }
+          if ($env:STABLE -ne 'true') { exit 0 }
           $a = (Get-FileHash publish/pmapi.dll).Hash
           $b = (Get-FileHash build-nosim/Release/pmapi.dll).Hash
           if ($a -ne $b) { throw "publish/pmapi.dll — не сборка без симулятора" }
