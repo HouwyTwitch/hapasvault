@@ -35,13 +35,17 @@ static uint64_t g_otp_times[TOKEN_OTP_RATE_N];
 static unsigned g_otp_pos;
 static uint64_t g_steam_times[TOKEN_STEAM_RATE_N];
 static unsigned g_steam_pos;
+static uint64_t g_label_times[TOKEN_LABEL_RATE_N];
+static unsigned g_label_pos;
 static uint64_t g_backoff_until;
 
 /* Часов у токена нет: время для OTP присылает ПК. Чтобы ПК не мог заранее
  * набрать коды «из будущего», токен помнит самое позднее принятое время и
- * дальше разрешает ему идти только вместе со своими монотонными часами. */
+ * дальше разрешает ему идти только вместе со своими монотонными часами.
+ * Грубая копия (g_cfg.otp_time) переживает выключение: назад дальше неё нельзя. */
 static uint64_t g_otp_time;      /* unix-секунды, 0 — ещё не было */
 static uint64_t g_otp_at;        /* hal_millis() в момент g_otp_time */
+static int      g_otp_live;      /* время уже принято после включения */
 
 typedef struct { uint32_t t; uint8_t cmd, st; uint32_t id; } log_ent;
 static log_ent  g_log[TOKEN_LOG_SIZE];
@@ -97,6 +101,9 @@ void token_init(void)
     /* неверные пароли пережили перезагрузку: задержка действует и после неё */
     g_backoff_until = hal_millis() + backoff_ms(g_cfg.fails);
     g_last_activity = hal_millis();
+    g_otp_time = g_cfg.otp_time;          /* нижняя граница; вперёд — с первого запроса */
+    g_otp_at = hal_millis();
+    g_otp_live = 0;
     hal_led(LED_IDLE);
 }
 
@@ -187,6 +194,26 @@ static long v_find(uint32_t id)
     return -1;
 }
 
+/* 1 — хранилище разобрано целиком и все поля в допустимых пределах.
+ * Проверяется один раз после загрузки: содержимое бэкапа задаёт тот, кто знает ключи,
+ * а команды дальше доверяют длинам полей. */
+static int v_valid(void)
+{
+    if (g_plain_len < VH) return 0;
+    size_t off = VH;
+    for (unsigned i = 0; i < v_count(); i++) {
+        size_t sz = v_entry_size(off);
+        if (!sz) return 0;
+        const uint8_t *e = g_plain + off + 4;
+        for (int k = 0; k < 3; k++) e += 1u + e[0];
+        if ((size_t)(e[0] | e[1] << 8) > PM_MAX_PASSWORD) return 0;
+        const uint8_t *otp = v_entry_otp(off);
+        if (otp[0] && pm_otp_validate(otp + 1, otp[0]) != 0) return 0;
+        off += sz;
+    }
+    return 1;
+}
+
 static void v_init_empty(void)
 {
     memset(g_plain, 0, VH);
@@ -219,13 +246,15 @@ static uint32_t backoff_ms(uint32_t fails)
     return ms > TOKEN_BACKOFF_MAX_MS ? TOKEN_BACKOFF_MAX_MS : ms;
 }
 
-/* Счётчик пишется во flash ДО ответа: выдёргивание токена после неверного
- * пароля не сбрасывает задержку. */
-static void register_fail(void)
+/* Бесплатные попытки: счётчик пишется во flash после неверного пароля, но ДО ответа —
+ * выдёргивание токена после ответа задержку не сбрасывает. Сбой записи не отменяет
+ * счёт и задержку в RAM. 0 = записано. */
+static int register_fail(void)
 {
     if (g_cfg.fails < 0xFFFFFFFFu) g_cfg.fails++;
-    store_config_save(&g_cfg);
+    int r = store_config_save(&g_cfg);
     g_backoff_until = hal_millis() + backoff_ms(g_cfg.fails);
+    return r;
 }
 
 static void reset_fails(void)
@@ -235,18 +264,29 @@ static void reset_fails(void)
     store_config_save(&g_cfg);
 }
 
-/* Время ПК для OTP: не дальше вперёд, чем позволяют часы токена. */
+/* Время ПК для OTP: не дальше вперёд, чем позволяют часы токена, и не раньше
+ * сохранённого во flash (код прошедшего момента бесполезен, а «отмотать назад и
+ * набрать окно заново» так не выйдет). Без питания часов нет: после включения
+ * первое время вперёд не ограничено — закрыть это могут только RTC или кнопка. */
 static int otp_time_ok(uint64_t t)
 {
     if (t < 1500000000u) return 0;                    /* 2017 год: заведомо неверные часы */
+    if (g_cfg.otp_time > TOKEN_OTP_SKEW_S && t < g_cfg.otp_time - TOKEN_OTP_SKEW_S) return 0;
     uint64_t now = hal_millis();
-    if (g_otp_time) {
+    if (g_otp_live) {
         uint64_t expected = g_otp_time + (now - g_otp_at) / 1000u;
         if (t > expected + TOKEN_OTP_SKEW_S) return 0;
     }
-    if (t > g_otp_time) {
-        g_otp_time = t;
+    if (t > g_otp_time || !g_otp_live) {
+        if (t > g_otp_time) g_otp_time = t;
         g_otp_at = now;
+        g_otp_live = 1;
+    }
+    /* грубая копия во flash: не чаще раза в сутки использования */
+    if (g_otp_time >= g_cfg.otp_time + TOKEN_OTP_SAVE_S) {
+        uint64_t before = g_cfg.otp_time;
+        g_cfg.otp_time = g_otp_time;
+        if (store_config_save(&g_cfg) != 0) g_cfg.otp_time = before;
     }
     return 1;
 }
@@ -361,6 +401,11 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
             }
             g_plain_len = pl;
             if (v_migrate() != 0) { st = ST_FULL; lock_vault(); break; }
+            if (!v_valid()) {                           /* ключи верны, но содержимое собрано руками */
+                store_wipe();
+                store_config_save(&g_cfg);
+                st = ST_BAD_ARGS; lock_vault(); break;
+            }
         } else {
             v_init_empty();
             if (v_save() != 0) { st = ST_FLASH; lock_vault(); break; }
@@ -381,17 +426,32 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
         if (!(g_cfg.flags & CFG_SETUP)) { st = ST_NOT_SETUP; break; }
         if (hal_millis() < g_backoff_until) { st = ST_BACKOFF; break; }
         lock_vault();
+        /* После бесплатных попыток попытка засчитывается во flash ДО проверки: по задержке
+         * ответа не угадать исход и не успеть выдернуть токен до записи счётчика. */
+        uint32_t fails_before = g_cfg.fails;
+        int counted = fails_before >= TOKEN_FREE_ATTEMPTS;
+        if (counted) {
+            if (g_cfg.fails < 0xFFFFFFFFu) g_cfg.fails++;
+            if (store_config_save(&g_cfg) != 0) { g_cfg.fails = fails_before; st = ST_FLASH; break; }
+        }
         pm_vault_key(g_kvault, g_cfg.k_token, k_pc, pw_hash);
         size_t pl;
         int lr = store_vault_load(g_kvault, g_plain, g_plain_cap, &pl);
         if (lr != 0) {
             lock_vault();
-            if (lr == -2) register_fail();
+            if (lr == -2) {
+                if (counted) g_backoff_until = hal_millis() + backoff_ms(g_cfg.fails);
+                else register_fail();          /* сбой записи: счёт и задержка остаются в RAM */
+            } else if (counted) {
+                g_cfg.fails = fails_before;    /* не пароль: попытку не считаем */
+                store_config_save(&g_cfg);
+            }
             st = lr == -2 ? ST_WRONG_KEY : ST_FLASH;
         } else {
             g_plain_len = pl;
             reset_fails();
             if (v_migrate() != 0) { lock_vault(); st = ST_FULL; break; }
+            if (!v_valid()) { lock_vault(); st = ST_FLASH; break; }   /* не пароль: счётчик не трогаем */
             g_unlocked = 1;
             hal_led(LED_UNLOCKED);
         }
@@ -511,6 +571,8 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
             ol = old[0];
             otp = old + 1;
         }
+        /* OTP из хранилища (бэкап мог собрать кто угодно, знающий ключи): не длиннее буфера entry */
+        if (ol > OTP_BLOB_MAX) { st = ST_BAD_ARGS; break; }
         /* новая запись собирается отдельно: старая ещё нужна (mode 2 берёт её OTP) */
         static uint8_t entry[4 + 3 * 256 + 2 + PM_MAX_PASSWORD + 1 + OTP_BLOB_MAX];
         size_t el = 0;
@@ -666,6 +728,7 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
         pm_config before = g_cfg;
         for (int i = slot; i + 1 < g_cfg.pc_count; i++) g_cfg.pcs[i] = g_cfg.pcs[i + 1];
         g_cfg.pc_count--;
+        g_cfg.pair_epoch++;              /* записанные раньше подписи привязки больше не годятся */
         crypto_wipe(&g_cfg.pcs[g_cfg.pc_count], sizeof g_cfg.pcs[0]);
         if (store_config_save(&g_cfg) != 0) { g_cfg = before; st = ST_FLASH; }
         else if (g_sess_pc == slot) g_sess_pc = -2;      /* себя: ответ уйдёт, потом сессия закроется */
@@ -682,6 +745,9 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
         if (g_sess_pc < 0) { st = ST_NOT_FOUND; break; }
         char *dst = g_cfg.pcs[g_sess_pc].label;
         if (strlen(dst) == l && memcmp(dst, name, l) == 0) break;   /* без лишней записи во flash */
+        /* работает и до unlock (имя ставится сразу после подключения): частоту записей
+           ограничиваем, иначе любой привязанный ПК изнашивает сектор конфигурации */
+        if (!window_ok(g_label_times, TOKEN_LABEL_RATE_N, &g_label_pos)) { st = ST_RATE_LIMIT; break; }
         memset(dst, 0, STORE_PC_LABEL);
         memcpy(dst, name, l);
         if (store_config_save(&g_cfg) != 0) st = ST_FLASH;
@@ -716,7 +782,7 @@ static size_t do_command(const uint8_t *req, size_t len, uint8_t *resp)
 size_t token_handle(const uint8_t *in, size_t len, uint8_t *out, size_t cap)
 {
     if (len < 1 || cap < 64) return frame_err(out, FE_BAD_FRAME);
-    g_last_activity = hal_millis();
+    /* простой отсчитывается только от кадров сессии: открытые WHO/PAIR его не продлевают */
 
     switch (in[0]) {
     case FR_WHO:
@@ -725,7 +791,8 @@ size_t token_handle(const uint8_t *in, size_t len, uint8_t *out, size_t cap)
         token_public_key(out + 1);
         out[33] = (g_cfg.flags & CFG_SETUP) ? 1 : 0;
         out[34] = g_cfg.pc_count;
-        return 35;
+        wire_put32(out + 35, g_cfg.pair_epoch);
+        return 39;
 
     case FR_PAIR: {
         /* первый ПК — только у чистого токена: настроенный принимает новые ПК по 24 словам */
@@ -750,7 +817,7 @@ size_t token_handle(const uint8_t *in, size_t len, uint8_t *out, size_t cap)
         if (hal_millis() < g_proof_after) return frame_err(out, FE_BAD_PROOF);
         uint8_t spk[32], want[32];
         token_public_key(spk);
-        pm_pair_proof(want, g_cfg.k_token, in + 1, spk);
+        pm_pair_proof(want, g_cfg.k_token, in + 1, spk, g_cfg.pair_epoch);
         int ok = crypto_verify32(want, in + 33) == 0;
         crypto_wipe(want, sizeof want);
         if (!ok) {
@@ -792,6 +859,7 @@ size_t token_handle(const uint8_t *in, size_t len, uint8_t *out, size_t cap)
         crypto_wipe(esk, 32);
         if (r != 0) return frame_err(out, FE_BAD_FRAME);
         g_sess_pc = pc;
+        g_last_activity = hal_millis();
         hal_led(LED_SESSION);
         out[0] = FR_HELLO;
         memcpy(out + 1, epk, 32);
@@ -807,6 +875,7 @@ size_t token_handle(const uint8_t *in, size_t len, uint8_t *out, size_t cap)
             hal_led(LED_ERROR);
             return frame_err(out, FE_DECRYPT);
         }
+        g_last_activity = hal_millis();
         int was_reset = g_req[0] == CMD_FACTORY_RESET;
         size_t rl = do_command(g_req, (size_t)pl, g_resp);
         crypto_wipe(g_req, (size_t)pl);

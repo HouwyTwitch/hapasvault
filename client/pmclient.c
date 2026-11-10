@@ -290,6 +290,8 @@ static int request(pm_client *c, const uint8_t *req, size_t len,
     crypto_wipe(c->buf_out, n);
     if (r < 0) return (int)r;
     if (c->buf_in[0] != FR_DATA) return PMC_E_PROTO;
+    /* buf_in больше plain: слишком длинный кадр не должен выйти за буфер открытого текста */
+    if ((size_t)r - 1 > sizeof c->plain + PM_MAC_LEN) { pm_session_clear(&c->sess); return PMC_E_PROTO; }
     long pl = pm_session_open(&c->sess, c->plain, c->buf_in + 1, (size_t)r - 1);
     if (pl < 1) { pm_session_clear(&c->sess); return PMC_E_PROTO; }
     if (resp) *resp = c->plain + 1;
@@ -304,18 +306,27 @@ static int simple_cmd(pm_client *c, uint8_t cmd)
 
 /* ---------------- сопряжение и сессия ---------------- */
 
-int pmc_who(pm_client *c, uint8_t token_pk[32], int *setup, int *pcs)
+/* WHO и эпоха привязки (нужна подписи pm_pair_proof). */
+static int who_epoch(pm_client *c, uint8_t token_pk[32], int *setup, int *pcs, uint32_t *epoch)
 {
     c->buf_out[0] = FR_WHO;
     long r = raw_xfer(c, 1);
     /* прошивка до протокола 5 не знает WHO: «обновите прошивку», а не «ошибка протокола» */
     if (r == PMC_E_TOKEN - FE_BAD_FRAME) return PMC_E_VERSION;
     if (r < 0) return (int)r;
-    if (r != 35 || c->buf_in[0] != FR_WHO) return PMC_E_PROTO;
+    /* протокол 5 отвечал 35 байтами, без эпохи: «обновите прошивку» */
+    if (r == 35 && c->buf_in[0] == FR_WHO) return PMC_E_VERSION;
+    if (r != 39 || c->buf_in[0] != FR_WHO) return PMC_E_PROTO;
     memcpy(token_pk, c->buf_in + 1, 32);
     if (setup) *setup = c->buf_in[33] & 1;
     if (pcs) *pcs = c->buf_in[34];
+    if (epoch) *epoch = wire_get32(c->buf_in + 35);
     return 0;
+}
+
+int pmc_who(pm_client *c, uint8_t token_pk[32], int *setup, int *pcs)
+{
+    return who_epoch(c, token_pk, setup, pcs, NULL);
 }
 
 static int pair_done(pm_client *c, const uint8_t token_pk[32], const uint8_t *k_pc)
@@ -344,14 +355,15 @@ int pmc_pair(pm_client *c)
 int pmc_pair_words(pm_client *c, const char *words)
 {
     uint8_t seed[32], k_token[32], k_pc[32], tpk[32];
+    uint32_t epoch = 0;
     if (bip39_decode(words, seed) != 0) return PMC_E_SEED;
     pm_keys_from_seed(seed, k_token, k_pc);
     crypto_wipe(seed, 32);
-    int rc = pmc_who(c, tpk, NULL, NULL);
+    int rc = who_epoch(c, tpk, NULL, NULL, &epoch);
     if (rc == 0) {
         c->buf_out[0] = FR_PAIR_PROOF;
         memcpy(c->buf_out + 1, c->pk, 32);
-        pm_pair_proof(c->buf_out + 33, k_token, c->pk, tpk);
+        pm_pair_proof(c->buf_out + 33, k_token, c->pk, tpk, epoch);
         long r = raw_xfer(c, 65);
         crypto_wipe(c->buf_out, 65);
         if (r < 0) rc = (int)r;

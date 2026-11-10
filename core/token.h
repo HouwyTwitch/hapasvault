@@ -19,6 +19,8 @@
 #define TOKEN_STEAM_RATE_N      30u                 /* ключей подтверждений Steam за окно */
 #define TOKEN_OTP_SKEW_S        300u                /* насколько время ПК может уйти вперёд */
 #define TOKEN_BACKOFF_MAX_MS    3600000u            /* предел задержки после неверных паролей */
+#define TOKEN_OTP_SAVE_S        86400u              /* время OTP во flash — не чаще раза в сутки */
+#define TOKEN_LABEL_RATE_N      4u                  /* смен имени ПК (запись flash) за окно */
 
 void token_init(void);
 
