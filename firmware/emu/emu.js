@@ -4,6 +4,10 @@
 //   npm ci && node emu.js ../../build-fw/pmtoken.uf2 [порт]
 //   pmhwtest tcp:<порт>
 //
+// Можно перечислить несколько UF2 через запятую: блоки по адресам флеш ложатся во флеш,
+// по адресам RAM — в RAM. Если есть RAM-образ (pmdiag), он запускается с начала RAM,
+// как это делает загрузчик ROM после такого UF2.
+//
 // Кадры по TCP те же, что по USB CDC, поэтому клиент работает с эмулятором как
 // с симулятором, а в прошивке исполняется настоящий ARM-код с TinyUSB. Запись
 // flash rp2040js не эмулирует — перехватываем ROM-функции flash_range_erase/program.
@@ -21,7 +25,7 @@ const BOOTROM_SHA256 = '99f8a1f813ce3aa9415884de3fb6c5b962d3c6fa0394b05413ad3c7b
 const MHZ = 125;
 
 const [uf2Path, portArg] = process.argv.slice(2);
-if (!uf2Path) { console.error('node emu.js pmtoken.uf2 [порт]'); process.exit(2); }
+if (!uf2Path) { console.error('node emu.js pmtoken.uf2[,другой.uf2] [порт]'); process.exit(2); }
 const port = Number(portArg || 47300);
 
 // Bootrom RP2040 (B1, BSD-3, Raspberry Pi) — скачиваем один раз и сверяем хэш
@@ -49,11 +53,17 @@ async function main() {
   mcu.loadBootrom(await bootrom());
   mcu.flash.fill(0xff);                       // чистая NOR-flash
 
-  const uf2 = fs.readFileSync(uf2Path);
-  for (let off = 0; off + 512 <= uf2.length; off += 512) {
-    if (uf2.readUInt32LE(off) !== 0x0a324655) throw new Error('не UF2');
-    const addr = uf2.readUInt32LE(off + 12), size = uf2.readUInt32LE(off + 16);
-    uf2.copy(mcu.flash, addr - 0x10000000, off + 32, off + 32 + size);
+  let ramImage = false;
+  for (const p of uf2Path.split(',')) {
+    const uf2 = fs.readFileSync(p);
+    for (let off = 0; off + 512 <= uf2.length; off += 512) {
+      if (uf2.readUInt32LE(off) !== 0x0a324655) throw new Error('не UF2');
+      const addr = uf2.readUInt32LE(off + 12), size = uf2.readUInt32LE(off + 16);
+      if (addr >= 0x20000000 && addr < 0x20042000) {
+        uf2.copy(mcu.sram, addr - 0x20000000, off + 32, off + 32 + size);
+        ramImage = true;
+      } else uf2.copy(mcu.flash, addr - 0x10000000, off + 32, off + 32 + size);
+    }
   }
 
   // таблица функций ROM: по адресу 0x14 — u16-указатель на пары (код, адрес)
@@ -145,7 +155,8 @@ async function main() {
     if (!dtrUpAt) while (pending.length && !cdc.txFIFO.full) cdc.sendSerialByte(pending.shift());
     setImmediate(run);
   };
-  core.PC = 0x10000000;
+  if (ramImage) { core.SP = 0x20042000; core.PC = 0x20000000; }   // RAM-образ: с начала RAM
+  else core.PC = 0x10000000;                                         // иначе boot2 во флеш
   run();
 }
 

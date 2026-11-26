@@ -45,3 +45,20 @@ pico_add_extra_outputs(pmtoken)
 # RGB-светодиод WS2812 (RP2040-Zero и подобные) — через PIO; программа уже
 # ассемблирована в ws2812_pio.h (pioasm из pico-sdk 2.1.1 не собирается новыми GCC)
 target_link_libraries(pmtoken PRIVATE hardware_pio)
+
+# pmdiag — диагностика платы на RP2040, которая работает из RAM (no_flash UF2) и не
+# трогает прошивку во флеш: отчёт REPORT.TXT на USB-диске. Собирается для любой
+# платы RP2040; в CI — в сборке pmtoken_rp2040_generic (кварц ждём 64 мс).
+if (PICO_PLATFORM STREQUAL "rp2040")
+  add_executable(pmdiag diag/pmdiag.c diag/diag_usb.c diag/diag_disk.c)
+  target_include_directories(pmdiag PRIVATE ${CMAKE_CURRENT_LIST_DIR}/diag)
+  target_compile_options(pmdiag PRIVATE -Wall -Wextra -Wno-unused-parameter -O2)
+  target_link_libraries(pmdiag PRIVATE
+    pico_stdlib pico_unique_id hardware_pio hardware_watchdog tinyusb_device)
+  pico_set_binary_type(pmdiag no_flash)
+  pico_enable_stdio_usb(pmdiag 0)
+  pico_enable_stdio_uart(pmdiag 0)
+  pico_set_program_name(pmdiag "pmdiag")
+  pico_set_program_description(pmdiag "HapasVault RP2040 board diagnostics (runs from RAM)")
+  pico_add_extra_outputs(pmdiag)
+endif()
