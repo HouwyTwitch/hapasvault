@@ -57,18 +57,49 @@ jobs:
   firmware:
     name: Firmware (RP2040 + RP2350, emulator)
     runs-on: ubuntu-latest
+    # обычно ~5 минут; зависшее зеркало или эмулятор не должны держать job часами
+    timeout-minutes: 40
     env:
       PICO_SDK_VERSION: 2.1.1
       # коммит тега 2.1.1: тег можно переставить, коммит — нет
       PICO_SDK_COMMIT: bddd20f928ce76142793bef434d4f75f4af6e433
+      # ARM-тулчейн из apt (~600 МБ .deb; libstdc++-arm-none-eabi-newlib нужен: pico-sdk
+      # линкует через g++ с -lstdc++)
+      ARM_PKGS: >-
+        binutils-arm-none-eabi gcc-arm-none-eabi libnewlib-arm-none-eabi libnewlib-dev
+        libstdc++-arm-none-eabi-dev libstdc++-arm-none-eabi-newlib
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
 
+      # .deb тулчейна кэшируются по их версиям: без кэша apt качал 600 МБ с зеркала Azure
+      # при каждом запуске, и однажды зеркало подвисло на 487-мегабайтном пакете
+      - name: ARM toolchain versions
+        id: armver
+        run: |
+          sudo apt-get update -q
+          key=$(apt-cache policy $ARM_PKGS | awk '/^[^ ]/{p=$1} /Candidate:/{print p $2}' | sha256sum | cut -c1-16)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Cache ARM toolchain packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/arm-debs
+          key: arm-debs-${{ runner.os }}-${{ steps.armver.outputs.key }}
+
       - name: ARM toolchain
-        run: sudo apt-get update -q && sudo apt-get install -y -q gcc-arm-none-eabi libnewlib-arm-none-eabi
+        timeout-minutes: 15
+        run: |
+          if ! ls ~/arm-debs/*.deb >/dev/null 2>&1; then
+            mkdir -p ~/arm-debs && cd ~/arm-debs
+            # оборванное или подвисшее скачивание — повтор, а не бесконечное ожидание
+            apt-get download -q -o Acquire::Retries=5 -o Acquire::http::Timeout=30 $ARM_PKGS
+          fi
+          # dpkg, а не apt: apt читает локальные .deb от пользователя _apt, а ему закрыт $HOME
+          sudo dpkg -i ~/arm-debs/*.deb
+          arm-none-eabi-gcc --version | head -1
 
       - name: Cache pico-sdk
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
