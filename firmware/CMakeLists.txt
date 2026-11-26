@@ -1,9 +1,14 @@
-# Прошивка pmtoken для Raspberry Pi Pico (RP2040), Pico 2 (RP2350) и Waveshare RP2040-Zero.
+# Прошивка pmtoken для Raspberry Pi Pico (RP2040), Pico 2 (RP2350), Waveshare RP2040-Zero
+# и прочих плат на RP2040 (универсальная сборка).
 #
-#   cmake -S firmware -B build-fw -DPICO_SDK_PATH=/path/to/pico-sdk -DPICO_BOARD=pico   # или pico2, waveshare_rp2040_zero
+#   cmake -S firmware -B build-fw -DPICO_SDK_PATH=/path/to/pico-sdk -DPICO_BOARD=pico
+#     PICO_BOARD: pico, pico2, waveshare_rp2040_zero или pmtoken_rp2040_generic (boards/)
 #   cmake --build build-fw
 #   -> build-fw/pmtoken.uf2: зажать BOOTSEL, подключить, скопировать на диск RPI-RP2
 cmake_minimum_required(VERSION 3.13)
+
+# свои описания плат (boards/*.h) — до pico_sdk_import: SDK выбирает плату при подключении
+list(APPEND PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_LIST_DIR}/boards)
 
 include(pico_sdk_import.cmake)
 project(pmtoken_fw C CXX ASM)

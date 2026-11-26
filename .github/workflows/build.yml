@@ -88,14 +88,15 @@ jobs:
             echo "pico-sdk: $head, ожидался $PICO_SDK_COMMIT"; exit 1
           fi
 
-      - name: Build firmware (Pico, Pico 2, RP2040-Zero)
+      - name: Build firmware (Pico, Pico 2, RP2040-Zero, generic RP2040)
         run: |
-          for b in pico pico2 waveshare_rp2040_zero; do
+          for b in pico pico2 waveshare_rp2040_zero pmtoken_rp2040_generic; do
             cmake -S firmware -B build-fw-$b -DPICO_SDK_PATH=$HOME/pico-sdk -DPICO_BOARD=$b
             cmake --build build-fw-$b -j
             cp build-fw-$b/pmtoken.uf2 pmtoken-$b.uf2
           done
           mv pmtoken-waveshare_rp2040_zero.uf2 pmtoken-rp2040-zero.uf2
+          mv pmtoken-pmtoken_rp2040_generic.uf2 pmtoken-rp2040-generic.uf2
           arm-none-eabi-size build-fw-*/pmtoken.elf
 
       - name: Build pmhwtest
@@ -125,6 +126,19 @@ jobs:
           [ $rc -eq 0 ] || exit $rc
           grep -q "WS2812: #000010" emu0.log || { echo "нет синей вспышки ожидания"; exit 1; }
           grep -q "WS2812: #002800" emu0.log || { echo "нет зелёного (хранилище открыто)"; exit 1; }
+
+      # универсальная RP2040 (клоны): boot2_generic_03h, светодиод и на GP25, и WS2812 на GP16
+      - name: Run generic RP2040 firmware in emulator (both LEDs)
+        working-directory: firmware/emu
+        run: |
+          EMU_WS2812=16 EMU_LED=25 node emu.js ../../pmtoken-rp2040-generic.uf2 47302 > emug.log 2>&1 &
+          for i in $(seq 60); do grep -q "CDC готов" emug.log && break; sleep 1; done
+          rc=0; timeout 900 ../../build/pmhwtest tcp:47302 || rc=$?
+          kill %1 || true
+          grep -v "запрос:" emug.log
+          [ $rc -eq 0 ] || exit $rc
+          grep -q "WS2812: #002800" emug.log || { echo "WS2812: нет зелёного (хранилище открыто)"; exit 1; }
+          grep -q "LED GPIO25: вкл" emug.log || { echo "GP25: светодиод не включался"; exit 1; }
 
       - name: Upload firmware
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -121,6 +121,17 @@ async function main() {
     });
   }
 
+  // EMU_LED=<пин>: обычный светодиод на GPIO — первые переключения (дальше мигает так же)
+  const ledPin = process.env.EMU_LED;
+  if (ledPin !== undefined) {
+    let changes = 0;
+    mcu.gpio[Number(ledPin)].addListener((st) => {
+      if (st > 1 || changes >= 10) return;          // 0/1 — выход; прочие — вход/Z
+      changes++;
+      console.log(`[emu] LED GPIO${ledPin}: ${st ? 'вкл' : 'выкл'}`);
+    });
+  }
+
   const run = () => {
     for (let i = 0; i < 400000; i++) {
       const h = hooks.get(core.PC);

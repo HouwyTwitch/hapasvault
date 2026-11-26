@@ -10,8 +10,9 @@
  * RNG:   пул BLAKE2b из нескольких независимых источников (pico_rand — на RP2350
  *        это аппаратный TRNG; биты ROSC; шум АЦП датчика температуры; время),
  *        выдача — «быстрое стирание ключа»: каждый вызов перешифровывает пул.
- * LED:   встроенный светодиод платы (GPIO 25 на Pico/Pico 2) или RGB WS2812 через PIO
- *        (RP2040-Zero и подобные: PICO_DEFAULT_WS2812_PIN из описания платы).
+ * LED:   встроенный светодиод платы (PICO_DEFAULT_LED_PIN: GPIO 25 на Pico/Pico 2) и/или
+ *        RGB WS2812 через PIO (PICO_DEFAULT_WS2812_PIN: GPIO 16 на RP2040-Zero). Универсальная
+ *        сборка (boards/pmtoken_rp2040_generic.h) задаёт оба: какой стоит на клоне — неизвестно.
  */
 #include "board.h"
 #include "hal.h"
@@ -260,34 +261,36 @@ static void ws2812_put(uint32_t rgb)
 void board_led_task(void)
 {
     uint64_t t = hal_millis();
+    bool err = t < g_error_until;
 #ifdef PICO_DEFAULT_WS2812_PIN
     uint32_t c;
-    if (t < g_error_until) c = (t / 100) % 2 ? RGB_ERROR : RGB_OFF;
+    if (err) c = (t / 100) % 2 ? RGB_ERROR : RGB_OFF;
     else switch (g_led) {
     case LED_UNLOCKED: c = RGB_UNLOCKED; break;
     case LED_SESSION:  c = t % 1000 < 120 ? RGB_SESSION : RGB_OFF; break;
     default:           c = t % 2000 < 120 ? RGB_IDLE : RGB_OFF; break;
     }
     ws2812_put(c);
-#elif defined(PICO_DEFAULT_LED_PIN)
+#endif
+#ifdef PICO_DEFAULT_LED_PIN
     bool on;
-    if (t < g_error_until) on = (t / 100) % 2;                     /* часто: ошибка */
+    if (err) on = (t / 100) % 2;                                   /* часто: ошибка */
     else switch (g_led) {
     case LED_UNLOCKED: on = true; break;                           /* горит: хранилище открыто */
     case LED_SESSION:  on = t % 1000 < 80; break;                  /* раз в секунду: сессия */
     default:           on = t % 3000 < 30; break;                  /* редкая вспышка: ждёт */
     }
     gpio_put(PICO_DEFAULT_LED_PIN, on);
-#else
-    (void)t;
 #endif
+    (void)err;
 }
 
 int board_init(void)
 {
 #ifdef PICO_DEFAULT_WS2812_PIN
     ws2812_init();
-#elif defined(PICO_DEFAULT_LED_PIN)
+#endif
+#ifdef PICO_DEFAULT_LED_PIN
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 #endif

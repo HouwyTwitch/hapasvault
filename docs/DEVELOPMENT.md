@@ -92,17 +92,26 @@ dotnet publish gui/HapasVault/HapasVault.csproj -c Release -r win-x64 --self-con
 
 Нужны `gcc-arm-none-eabi` и pico-sdk 2.1.1:
 ```
-cmake -S firmware -B build-fw -DPICO_SDK_PATH=~/pico-sdk -DPICO_BOARD=pico   # или pico2, waveshare_rp2040_zero
+cmake -S firmware -B build-fw -DPICO_SDK_PATH=~/pico-sdk -DPICO_BOARD=pico   # или pico2, waveshare_rp2040_zero, pmtoken_rp2040_generic
 cmake --build build-fw          # -> build-fw/pmtoken.uf2
 ```
 
 Если на клоне RP2040-Zero красный и зелёный перепутаны (у части диодов порядок
 RGB, а не GRB), добавьте `PMTOKEN_WS2812_RGB=1` в `target_compile_definitions`.
 
+`pmtoken_rp2040_generic` (`firmware/boards/`) — для клонов, на которых не
+стартует прошивка для Pico. Флеш читается через `boot2_generic_03h` (команда 0x03
+без Quad-режима, clk_sys/4): `boot2_w25q080` из Pico включает Quad командами
+Winbond, и с флеш другой серии процессор зависает сразу после загрузчика. Кварц
+ждём 64 мс вместо 6. Светодиод — обычный на GP25 и WS2812 на GP16 одновременно.
+Другую ножку можно задать при сборке:
+`-DCMAKE_C_FLAGS="-DPICO_DEFAULT_LED_PIN=17"`.
+
 **Без платы.** Прошивка запускается в эмуляторе RP2040
 ([rp2040js](https://github.com/wokwi/rp2040js)): исполняется настоящий ARM-код
 вместе с TinyUSB, USB CDC проброшен на TCP-порт, и `pmhwtest` проходит по нему
-весь сценарий. `EMU_WS2812=16` декодирует сигнал RGB-светодиода в цвета.
+весь сценарий. `EMU_WS2812=16` декодирует сигнал RGB-светодиода в цвета,
+`EMU_LED=25` печатает переключения обычного светодиода.
 ```
 cd firmware/emu && npm ci && node emu.js ../../build-fw/pmtoken.uf2 47300
 pmhwtest tcp:47300
@@ -142,7 +151,8 @@ GitHub Actions (`.github/workflows/build.yml`) на каждый push:
   симулятора;
 * Windows: MSVC, WPF, те же тесты, скриншоты всех экранов (артефакт
   `screenshots`), архив программы;
-* прошивки для Pico, Pico 2 и RP2040-Zero, прогон каждой в эмуляторе RP2040.
+* прошивки для Pico, Pico 2, RP2040-Zero и универсальная RP2040, прогон каждой
+  на RP2040 в эмуляторе.
 
 Если всё зелёное, CI **сам публикует релиз**:
 
