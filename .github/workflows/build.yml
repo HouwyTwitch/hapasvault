@@ -98,7 +98,8 @@ jobs:
           mv pmtoken-waveshare_rp2040_zero.uf2 pmtoken-rp2040-zero.uf2
           mv pmtoken-pmtoken_rp2040_generic.uf2 pmtoken-rp2040-generic.uf2
           cp build-fw-pmtoken_rp2040_generic/pmdiag.uf2 pmdiag-rp2040.uf2
-          arm-none-eabi-size build-fw-*/pmtoken.elf build-fw-pmtoken_rp2040_generic/pmdiag.elf
+          cp build-fw-pmtoken_rp2040_generic/pmdiag_flash.uf2 pmdiag-flash-rp2040.uf2
+          arm-none-eabi-size build-fw-*/pmtoken.elf build-fw-pmtoken_rp2040_generic/pmdiag*.elf
 
       - name: Build pmhwtest
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j --target pmhwtest
@@ -155,6 +156,18 @@ jobs:
           [ $rc -eq 0 ] || exit $rc
           grep -q "строка «pmtoken» найдена" report.txt || { echo "pmdiag не нашёл прошивку во флеш"; exit 1; }
 
+      # pmdiag_flash: диагностика как прошивка во флеш, шаги запуска pmtoken по одному
+      - name: Run pmdiag (flash) in emulator
+        working-directory: firmware/emu
+        run: |
+          node emu.js ../../pmdiag-flash-rp2040.uf2 47304 > emudf.log 2>&1 &
+          for i in $(seq 60); do grep -q "CDC готов" emudf.log && break; sleep 1; done
+          rc=0; timeout 300 node diag-report.js 47304 > report-flash.txt || rc=$?
+          kill %1 || true
+          cat report-flash.txt
+          [ $rc -eq 0 ] || exit $rc
+          grep -q "token_init (хранилище во флеш): ок" report-flash.txt || { echo "pmdiag_flash: token_init не прошёл"; exit 1; }
+
       - name: Upload firmware
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -162,6 +175,7 @@ jobs:
           path: |
             pmtoken-*.uf2
             pmdiag-rp2040.uf2
+            pmdiag-flash-rp2040.uf2
 
   windows:
     name: Windows x64 (MSVC + WPF)

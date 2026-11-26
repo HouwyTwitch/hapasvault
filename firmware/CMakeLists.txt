@@ -17,12 +17,13 @@ pico_sdk_init()
 
 set(ROOT ${CMAKE_CURRENT_LIST_DIR}/..)
 
-add_executable(pmtoken
-  main.c hal_rp2040.c usb_descriptors.c
-  # то же ядро, что в симуляторе и тестах
+# то же ядро, что в симуляторе и тестах (и в pmdiag_flash)
+set(PMTOKEN_CORE
   ${ROOT}/core/token.c ${ROOT}/core/store.c ${ROOT}/core/session.c ${ROOT}/core/kdf.c
   ${ROOT}/core/bip39.c ${ROOT}/core/bip39_words.c ${ROOT}/core/sha.c ${ROOT}/core/otp.c
   ${ROOT}/core/framer.c ${ROOT}/third_party/monocypher/monocypher.c)
+
+add_executable(pmtoken main.c hal_rp2040.c usb_descriptors.c ${PMTOKEN_CORE})
 
 target_include_directories(pmtoken PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${ROOT}/core ${ROOT}/third_party/monocypher)
 target_compile_options(pmtoken PRIVATE -Wall -Wextra -Wno-unused-parameter -O2)
@@ -70,4 +71,22 @@ if (PICO_PLATFORM STREQUAL "rp2040")
   pico_set_program_name(pmdiag "pmdiag")
   pico_set_program_description(pmdiag "HapasVault RP2040 board diagnostics (runs from RAM)")
   pico_add_extra_outputs(pmdiag)
+
+  # pmdiag_flash — та же диагностика как обычная прошивка во флеш (заменяет pmtoken):
+  # запускается ли с платы код из флеш и на каком шаге запуска pmtoken (board_init,
+  # token_init — тот же код) виснет прошивка. hal_rp2040.c берёт board.h и
+  # ws2812_pio.h из своей папки, поэтому firmware/ (с tusb_config.h токена) не в путях.
+  add_executable(pmdiag_flash diag/pmdiag.c diag/diag_usb.c diag/diag_disk.c hal_rp2040.c ${PMTOKEN_CORE})
+  target_include_directories(pmdiag_flash PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/diag ${ROOT}/core ${ROOT}/third_party/monocypher)
+  target_compile_options(pmdiag_flash PRIVATE -Wall -Wextra -Wno-unused-parameter -O2)
+  target_compile_definitions(pmdiag_flash PRIVATE PMDIAG_FLASH=1 PICO_FLASH_ASSUME_CORE1_SAFE=1)
+  target_link_libraries(pmdiag_flash PRIVATE
+    pico_stdlib pico_unique_id pico_rand pico_flash hardware_flash hardware_adc
+    hardware_pio hardware_watchdog tinyusb_device)
+  pico_enable_stdio_usb(pmdiag_flash 0)
+  pico_enable_stdio_uart(pmdiag_flash 0)
+  pico_set_program_name(pmdiag_flash "pmdiag_flash")
+  pico_set_program_description(pmdiag_flash "HapasVault RP2040 board diagnostics (flash)")
+  pico_add_extra_outputs(pmdiag_flash)
 endif()

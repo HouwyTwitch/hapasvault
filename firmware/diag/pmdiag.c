@@ -12,6 +12,12 @@
  * Рискованные этапы (общение с флешем) под сторожевым таймером: если этап завис,
  * через 4 с диагностика перезапускается в себя (RAM не стирается), этап
  * пропускается и в отчёте отмечен как зависший.
+ *
+ * PMDIAG_FLASH=1 (цель pmdiag_flash): та же диагностика как обычная прошивка во флеш.
+ * Отвечает на вопрос «запускается ли с этой платы хоть что-то из флеш» и по одному
+ * прогоняет настоящие шаги запуска pmtoken (board_init, token_init — тот же код,
+ * что в прошивке) под сторожевым таймером; зависший шаг попадает в отчёт.
+ * Прямые тесты флеш (SSI, запись) здесь не делаются: код сам исполняется из флеш.
  */
 #include "diag_disk.h"
 
@@ -35,7 +41,19 @@
 #include <stdio.h>
 #include <string.h>
 
-#define DIAG_VERSION "1"
+#ifndef PMDIAG_FLASH
+#define PMDIAG_FLASH 0
+#endif
+#if PMDIAG_FLASH
+#include "hardware/adc.h"
+#include "hardware/flash.h"
+#include "pico/flash.h"
+#include "pico/rand.h"
+int  board_init(void);                 /* firmware/hal_rp2040.c */
+void token_init(void);                 /* core/token.c */
+#endif
+
+#define DIAG_VERSION "2"
 
 /* ---------------- отчёт ---------------- */
 
@@ -54,7 +72,7 @@ static void line(const char *fmt, ...)
     if (sizeof g_rep - g_len > 2) { g_rep[g_len++] = '\r'; g_rep[g_len++] = '\n'; g_rep[g_len] = 0; }
 }
 
-static void hex(const char *label, const uint8_t *p, size_t n)
+static void __unused hex(const char *label, const uint8_t *p, size_t n)
 {
     char buf[3 * 64 + 1];
     size_t k = 0;
@@ -65,13 +83,19 @@ static void hex(const char *label, const uint8_t *p, size_t n)
 
 /* ---------------- сторожевой таймер для рискованных этапов ---------------- */
 
-enum { ST_JEDEC = 1, ST_READ, ST_SPEED, ST_WRITE, ST_BOOT2, ST_COUNT };
+enum { ST_JEDEC = 1, ST_READ, ST_SPEED, ST_WRITE, ST_BOOT2,
+       ST_ADC, ST_RAND, ST_FLASHCMD, ST_BOARD, ST_TOKEN, ST_COUNT };
 static const char *const st_name[ST_COUNT] = {
     [ST_JEDEC] = "опрос флеш (JEDEC/SFDP/регистры)",
     [ST_READ]  = "чтение флеш",
     [ST_SPEED] = "чтение флеш на разных скоростях",
     [ST_WRITE] = "запись флеш",
     [ST_BOOT2] = "загрузчик второй стадии из флеш",
+    [ST_ADC]   = "АЦП: датчик температуры",
+    [ST_RAND]  = "pico_rand",
+    [ST_FLASHCMD] = "flash_safe_execute + команда флеш",
+    [ST_BOARD] = "board_init прошивки",
+    [ST_TOKEN] = "token_init прошивки",
 };
 
 #define WD_STAGE 0x504D4400u          /* scratch0: «PMD» + номер идущего этапа */
@@ -98,7 +122,11 @@ static bool stage_begin(int st)
         return false;
     }
     watchdog_hw->scratch[0] = WD_STAGE | (uint32_t)st;
-    watchdog_reboot(SRAM_BASE, SRAM_END, 4000);   /* зависли — перезапуск в себя */
+#if PMDIAG_FLASH
+    watchdog_reboot(0, 0, 4000);                  /* зависли — обычная перезагрузка из флеш */
+#else
+    watchdog_reboot(SRAM_BASE, SRAM_END, 4000);   /* зависли — перезапуск в себя (RAM цела) */
+#endif
     return true;
 }
 
@@ -109,6 +137,17 @@ static void stage_end(void)
     watchdog_hw->scratch[4] = 0;
 }
 
+/* CRC-32 без отражения, полином 0x04C11DB7 (как у загрузчика второй стадии) */
+static uint32_t crc32_mpeg(const uint8_t *p, size_t n, uint32_t crc)
+{
+    while (n--) {
+        crc ^= (uint32_t)*p++ << 24;
+        for (int k = 0; k < 8; k++) crc = crc & 0x80000000u ? crc << 1 ^ 0x04C11DB7u : crc << 1;
+    }
+    return crc;
+}
+
+#if !PMDIAG_FLASH
 /* ---------------- флеш напрямую через SSI ---------------- */
 
 static void cs_force(bool high)
@@ -183,18 +222,11 @@ static bool spi_read(uint32_t addr, uint8_t *data, size_t n)
     return true;
 }
 
-/* CRC-32 без отражения, полином 0x04C11DB7 (как у загрузчика второй стадии) */
-static uint32_t crc32_mpeg(const uint8_t *p, size_t n, uint32_t crc)
-{
-    while (n--) {
-        crc ^= (uint32_t)*p++ << 24;
-        for (int k = 0; k < 8; k++) crc = crc & 0x80000000u ? crc << 1 ^ 0x04C11DB7u : crc << 1;
-    }
-    return crc;
-}
+#endif /* !PMDIAG_FLASH */
 
 /* ---------------- этапы ---------------- */
 
+#if !PMDIAG_FLASH
 static uint8_t g_jedec[3];
 static uint8_t g_boot2[256];
 static bool    g_boot2_ok;
@@ -202,6 +234,7 @@ static bool    g_boot2_ok;
 static uint8_t g_ref[REF_BYTES];      /* эталон: медленное чтение первых 64 КБ */
 static uint8_t g_tmp[4096];
 static bool    g_ref_ok;
+#endif
 
 static uint32_t fc_khz(uint32_t src)
 {
@@ -248,6 +281,7 @@ static void report_chip(void)
     line("");
 }
 
+#if !PMDIAG_FLASH
 static const char *vendor(uint8_t m)
 {
     switch (m) {
@@ -478,6 +512,86 @@ static void report_boot2(void)
     stage_end();
     line("");
 }
+#endif /* !PMDIAG_FLASH */
+
+#if PMDIAG_FLASH
+static uint64_t g_t_main;
+
+static void jedec_cb(void *p)
+{
+    uint8_t tx[4] = {0x9F, 0, 0, 0}, rx[4] = {0};
+    flash_do_cmd(tx, rx, sizeof tx);
+    memcpy(p, rx + 1, 3);
+}
+
+static void report_flash_boot(void)
+{
+    line("[Запуск из флеш]");
+    line("  диагностика запустилась из флеш: значит, загрузка с флеш на этой плате работает");
+    line("  таймер при входе в main: %lu мс", (unsigned long)(g_t_main / 1000u));
+    uint8_t b2[256];
+    memcpy(b2, (const void *)XIP_BASE, sizeof b2);
+    uint32_t want = b2[252] | (uint32_t)b2[253] << 8 | (uint32_t)b2[254] << 16 | (uint32_t)b2[255] << 24;
+    bool quad = false;
+    for (int i = 0; i + 1 < 252; i += 2) if (b2[i] == 0x35 && b2[i + 1] == 0x20) quad = true;
+    line("  boot2: CRC %s, %s", crc32_mpeg(b2, 252, 0xFFFFFFFFu) == want ? "верна" : "НЕВЕРНА",
+         quad ? "Quad с командами Winbond" : "generic_03h");
+    line("");
+}
+
+/* Шаги запуска pmtoken в том же порядке, что в прошивке, до включения USB. */
+static void report_pmtoken_steps(void)
+{
+    line("[Шаги запуска pmtoken] (по одному, под сторожевым таймером, до включения USB — как в прошивке)");
+    uint64_t t;
+    if (stage_begin(ST_ADC)) {
+        t = time_us_64();
+        adc_init();
+        adc_set_temp_sensor_enabled(true);
+        adc_select_input(ADC_TEMPERATURE_CHANNEL_NUM);
+        uint16_t lo = 0xFFFF, hi = 0;
+        for (int i = 0; i < 128; i++) {
+            uint16_t v = adc_read();
+            if (v < lo) lo = v;
+            if (v > hi) hi = v;
+        }
+        adc_set_temp_sensor_enabled(false);
+        stage_end();
+        line("  АЦП, датчик температуры (128 замеров): ок за %lu мкс, значения %u..%u",
+             (unsigned long)(time_us_64() - t), lo, hi);
+    }
+    if (stage_begin(ST_RAND)) {
+        t = time_us_64();
+        rng_128_t r;
+        for (int i = 0; i < 8; i++) get_rand_128(&r);
+        stage_end();
+        line("  pico_rand (8 x 128 бит): ок за %lu мкс", (unsigned long)(time_us_64() - t));
+    }
+    if (stage_begin(ST_FLASHCMD)) {
+        uint8_t id[3] = {0};
+        t = time_us_64();
+        int rc = flash_safe_execute(jedec_cb, id, 1000);
+        stage_end();
+        line("  flash_safe_execute + JEDEC: rc=%d (0 = ок), %02X %02X %02X, за %lu мкс", rc, id[0], id[1], id[2],
+             (unsigned long)(time_us_64() - t));
+    }
+    if (stage_begin(ST_BOARD)) {
+        t = time_us_64();
+        int rc = board_init();
+        stage_end();
+        line("  board_init (светодиод, энтропия, размер флеш): rc=%d (0 = ок), за %lu мс", rc,
+             (unsigned long)((time_us_64() - t) / 1000u));
+    }
+    if (stage_begin(ST_TOKEN)) {
+        t = time_us_64();
+        token_init();
+        stage_end();
+        line("  token_init (хранилище во флеш): ок за %lu мс", (unsigned long)((time_us_64() - t) / 1000u));
+    }
+    line("  все шаги прошли — значит, pmtoken должен доходить до USB; ищем дальше");
+    line("");
+}
+#endif
 
 /* ---------------- поиск светодиода ---------------- */
 
@@ -577,16 +691,28 @@ static void cdc_task(void)
 
 int main(void)
 {
+#if PMDIAG_FLASH
+    g_t_main = time_us_64();
+#endif
     guard_init();
+#if PMDIAG_FLASH
+    line("HapasVault pmdiag v" DIAG_VERSION " (флеш) — диагностика платы RP2040, записана во флеш вместо прошивки");
+#else
     line("HapasVault pmdiag v" DIAG_VERSION " — диагностика платы RP2040 (работает из RAM, флеш не стирает)");
+#endif
     line("Пришлите этот файл целиком. Файл: REPORT.TXT на диске PMDIAG.");
     line("");
     report_chip();
+#if PMDIAG_FLASH
+    report_flash_boot();
+    report_pmtoken_steps();
+#else
     report_flash_id();
     report_flash_content();
     report_speed();
     report_write();
     report_boot2();                   /* последним: boot2 для Pico может перевести чужую флеш в QPI */
+#endif
 
     line("[Светодиод]");
     line("  Сейчас по очереди мигают GPIO 16-25: сначала как обычный светодиод, потом как WS2812 (зелёным).");
