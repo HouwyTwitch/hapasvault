@@ -104,8 +104,9 @@ RGB, а не GRB), добавьте `PMTOKEN_WS2812_RGB=1` в `target_compile_de
 без Quad-режима, clk_sys/4): `boot2_w25q080` из Pico включает Quad командами
 Winbond, и с флеш другой серии процессор зависает сразу после загрузчика. Кварц
 ждём 64 мс вместо 6. Светодиод — обычный на GP25 и WS2812 на GP16 одновременно.
-Другую ножку можно задать при сборке:
-`-DCMAKE_C_FLAGS="-DPICO_DEFAULT_LED_PIN=17"`.
+Другую ножку можно задать при сборке: `-DPMTOKEN_LED_PIN=17` (обычный
+светодиод) или `-DPMTOKEN_WS2812_PIN=12` (WS2812). Через `CMAKE_C_FLAGS` этого не
+делайте: он затирает флаги процессора из SDK (`-mcpu=cortex-m0plus -mthumb`).
 
 **Диагностика платы** (`firmware/diag/`, цель `pmdiag`, собирается для любой
 платы на RP2040 → `build-fw/pmdiag.uf2`). Это no_flash UF2: загрузчик ROM

@@ -46,6 +46,15 @@ pico_add_extra_outputs(pmtoken)
 # ассемблирована в ws2812_pio.h (pioasm из pico-sdk 2.1.1 не собирается новыми GCC)
 target_link_libraries(pmtoken PRIVATE hardware_pio)
 
+# Своя ножка светодиода: cmake ... -DPMTOKEN_LED_PIN=17 и/или -DPMTOKEN_WS2812_PIN=12
+# (описания плат задают их через #ifndef, поэтому определение с командной строки главнее)
+if (DEFINED PMTOKEN_LED_PIN)
+  target_compile_definitions(pmtoken PRIVATE PICO_DEFAULT_LED_PIN=${PMTOKEN_LED_PIN})
+endif()
+if (DEFINED PMTOKEN_WS2812_PIN)
+  target_compile_definitions(pmtoken PRIVATE PICO_DEFAULT_WS2812_PIN=${PMTOKEN_WS2812_PIN})
+endif()
+
 # pmdiag — диагностика платы на RP2040, которая работает из RAM (no_flash UF2) и не
 # трогает прошивку во флеш: отчёт REPORT.TXT на USB-диске. Собирается для любой
 # платы RP2040; в CI — в сборке pmtoken_rp2040_generic (кварц ждём 64 мс).
