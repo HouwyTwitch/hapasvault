@@ -129,11 +129,13 @@ jobs:
           grep -q "WS2812: #000010" emu0.log || { echo "нет синей вспышки ожидания"; exit 1; }
           grep -q "WS2812: #002800" emu0.log || { echo "нет зелёного (хранилище открыто)"; exit 1; }
 
-      # универсальная RP2040 (клоны): boot2_generic_03h, светодиод и на GP25, и WS2812 на GP16
-      - name: Run generic RP2040 firmware in emulator (both LEDs)
+      # универсальная RP2040 (клоны): boot2_generic_03h, светодиод и на GP25, и WS2812 на GP16.
+      # Флеш отвечает на JEDEC как W25Q32 (4 МБ, как у RP2040_USB) при 2 МБ в описании платы:
+      # раньше прошивка падала здесь в hard_assert pico-sdk на первой записи — до USB
+      - name: Run generic RP2040 firmware in emulator (both LEDs, 4 MB flash)
         working-directory: firmware/emu
         run: |
-          EMU_WS2812=16 EMU_LED=25 node emu.js ../../pmtoken-rp2040-generic.uf2 47302 > emug.log 2>&1 &
+          EMU_FLASH_JEDEC=EF4016 EMU_WS2812=16 EMU_LED=25 node emu.js ../../pmtoken-rp2040-generic.uf2 47302 > emug.log 2>&1 &
           for i in $(seq 60); do grep -q "CDC готов" emug.log && break; sleep 1; done
           rc=0; timeout 900 ../../build/pmhwtest tcp:47302 || rc=$?
           kill %1 || true

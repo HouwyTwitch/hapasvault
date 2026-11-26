@@ -66,6 +66,26 @@ async function main() {
     }
   }
 
+  // EMU_FLASH_JEDEC=EF4016: отвечать на команду 0x9F (JEDEC ID) как настоящая флеш —
+  // так прошивка видит объём чипа (16 = 4 МБ). Без неё SSI rp2040js отвечает нулями и
+  // прошивка остаётся при объёме из описания платы. Ответ — побайтно в такт записи в DR0.
+  const jedecEnv = process.env.EMU_FLASH_JEDEC;
+  if (jedecEnv) {
+    const id = [...Buffer.from(jedecEnv, 'hex')];
+    const ssi = mcu.peripherals[0x18000];
+    const write = ssi.writeUint32.bind(ssi), read = ssi.readUint32.bind(ssi);
+    const rx = [];
+    let resp = [];
+    ssi.writeUint32 = (off, v) => {
+      if (off === 0x60) {                                   // DR0
+        if (!resp.length && (v & 0xff) === 0x9f) resp = [0, ...id];
+        rx.push(resp.length ? resp.shift() : 0);
+      }
+      write(off, v);
+    };
+    ssi.readUint32 = (off) => (off === 0x60 && rx.length ? rx.shift() : read(off));
+  }
+
   // таблица функций ROM: по адресу 0x14 — u16-указатель на пары (код, адрес)
   const rd16 = (a) => mcu.readUint8(a) | (mcu.readUint8(a + 1) << 8);
   const rom = {};

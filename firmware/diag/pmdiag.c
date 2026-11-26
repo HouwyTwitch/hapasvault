@@ -544,6 +544,7 @@ static void report_pmtoken_steps(void)
 {
     line("[Шаги запуска pmtoken] (по одному, под сторожевым таймером, до включения USB — как в прошивке)");
     uint64_t t;
+    uint32_t steps = (1u << ST_ADC) | (1u << ST_RAND) | (1u << ST_FLASHCMD) | (1u << ST_BOARD) | (1u << ST_TOKEN);
     if (stage_begin(ST_ADC)) {
         t = time_us_64();
         adc_init();
@@ -588,7 +589,8 @@ static void report_pmtoken_steps(void)
         stage_end();
         line("  token_init (хранилище во флеш): ок за %lu мс", (unsigned long)((time_us_64() - t) / 1000u));
     }
-    line("  все шаги прошли — значит, pmtoken должен доходить до USB; ищем дальше");
+    if (g_hung & steps) line("  ! прошивка pmtoken зависает на отмеченном шаге — до USB она не доходит");
+    else line("  все шаги прошли — значит, pmtoken должен доходить до USB; ищем дальше");
     line("");
 }
 #endif

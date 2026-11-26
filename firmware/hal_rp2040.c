@@ -3,7 +3,8 @@
  * HAL для RP2040 (Pico) и RP2350 (Pico 2).
  *
  * flash: всё после первых FW_RESERVE (место под прошивку) до конца чипа; размер
- *        чипа — по JEDEC ID. Запись посекторно через flash_safe_execute
+ *        чипа — по JEDEC ID, но не больше PICO_FLASH_SIZE_BYTES (см. detect_flash).
+ *        Запись посекторно через flash_safe_execute
  *        (прерывания выключены только на один сектор), сторожевой таймер — между ними.
  * RAM:   буфер открытого хранилища — вся свободная куча после прошивки, поэтому
  *        ёмкость сама подстраивается под чип (RP2040 ~190 КБ, RP2350 ~450 КБ).
@@ -78,11 +79,19 @@ static void read_jedec(void *p)
     *(uint8_t *)p = rx[3];
 }
 
+/* Объём по JEDEC, но не больше PICO_FLASH_SIZE_BYTES из описания платы: flash_range_erase
+ * и flash_range_program в pico-sdk проверяют это hard_assert'ом, который и в релизной
+ * сборке не отключается. Без ограничения прошивка на плате с флеш больше описанной
+ * (RP2040_USB: 4 МБ при 2 МБ в pico.h) падала в panic на первой записи конфигурации —
+ * до USB. Больше и не нужно: ёмкость ограничена RAM, а не флеш. Чип меньше описанного —
+ * берём его размер, иначе запись в «конец» ушла бы по кругу на саму прошивку. */
 static void detect_flash(void)
 {
     uint8_t log2 = 0;
-    if (flash_safe_execute(read_jedec, &log2, 1000) == PICO_OK && log2 >= 20 && log2 <= 24)
-        g_flash_bytes = 1u << log2;    /* 1..16 МБ: окно XIP — 16 МБ */
+    if (flash_safe_execute(read_jedec, &log2, 1000) == PICO_OK && log2 >= 20 && log2 <= 24) {
+        uint32_t chip = 1u << log2;    /* 1..16 МБ: окно XIP — 16 МБ */
+        g_flash_bytes = chip < PICO_FLASH_SIZE_BYTES ? chip : PICO_FLASH_SIZE_BYTES;
+    }
 }
 
 uint8_t *hal_vault_buffer(size_t *cap)
