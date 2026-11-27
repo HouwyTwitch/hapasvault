@@ -57,18 +57,49 @@ jobs:
   firmware:
     name: Firmware (RP2040 + RP2350, emulator)
     runs-on: ubuntu-latest
+    # обычно ~5 минут; зависшее зеркало или эмулятор не должны держать job часами
+    timeout-minutes: 40
     env:
       PICO_SDK_VERSION: 2.1.1
       # коммит тега 2.1.1: тег можно переставить, коммит — нет
       PICO_SDK_COMMIT: bddd20f928ce76142793bef434d4f75f4af6e433
+      # ARM-тулчейн из apt (~600 МБ .deb; libstdc++-arm-none-eabi-newlib нужен: pico-sdk
+      # линкует через g++ с -lstdc++)
+      ARM_PKGS: >-
+        binutils-arm-none-eabi gcc-arm-none-eabi libnewlib-arm-none-eabi libnewlib-dev
+        libstdc++-arm-none-eabi-dev libstdc++-arm-none-eabi-newlib
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
 
+      # .deb тулчейна кэшируются по их версиям: без кэша apt качал 600 МБ с зеркала Azure
+      # при каждом запуске, и однажды зеркало подвисло на 487-мегабайтном пакете
+      - name: ARM toolchain versions
+        id: armver
+        run: |
+          sudo apt-get update -q
+          key=$(apt-cache policy $ARM_PKGS | awk '/^[^ ]/{p=$1} /Candidate:/{print p $2}' | sha256sum | cut -c1-16)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Cache ARM toolchain packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/arm-debs
+          key: arm-debs-${{ runner.os }}-${{ steps.armver.outputs.key }}
+
       - name: ARM toolchain
-        run: sudo apt-get update -q && sudo apt-get install -y -q gcc-arm-none-eabi libnewlib-arm-none-eabi
+        timeout-minutes: 15
+        run: |
+          if ! ls ~/arm-debs/*.deb >/dev/null 2>&1; then
+            mkdir -p ~/arm-debs && cd ~/arm-debs
+            # оборванное или подвисшее скачивание — повтор, а не бесконечное ожидание
+            apt-get download -q -o Acquire::Retries=5 -o Acquire::http::Timeout=30 $ARM_PKGS
+          fi
+          # dpkg, а не apt: apt читает локальные .deb от пользователя _apt, а ему закрыт $HOME
+          sudo dpkg -i ~/arm-debs/*.deb
+          arm-none-eabi-gcc --version | head -1
 
       - name: Cache pico-sdk
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -88,15 +119,18 @@ jobs:
             echo "pico-sdk: $head, ожидался $PICO_SDK_COMMIT"; exit 1
           fi
 
-      - name: Build firmware (Pico, Pico 2, RP2040-Zero)
+      - name: Build firmware (Pico, Pico 2, RP2040-Zero, generic RP2040)
         run: |
-          for b in pico pico2 waveshare_rp2040_zero; do
+          for b in pico pico2 waveshare_rp2040_zero pmtoken_rp2040_generic; do
             cmake -S firmware -B build-fw-$b -DPICO_SDK_PATH=$HOME/pico-sdk -DPICO_BOARD=$b
             cmake --build build-fw-$b -j
             cp build-fw-$b/pmtoken.uf2 pmtoken-$b.uf2
           done
           mv pmtoken-waveshare_rp2040_zero.uf2 pmtoken-rp2040-zero.uf2
-          arm-none-eabi-size build-fw-*/pmtoken.elf
+          mv pmtoken-pmtoken_rp2040_generic.uf2 pmtoken-rp2040-generic.uf2
+          cp build-fw-pmtoken_rp2040_generic/pmdiag.uf2 pmdiag-rp2040.uf2
+          cp build-fw-pmtoken_rp2040_generic/pmdiag_flash.uf2 pmdiag-flash-rp2040.uf2
+          arm-none-eabi-size build-fw-*/pmtoken.elf build-fw-pmtoken_rp2040_generic/pmdiag*.elf
 
       - name: Build pmhwtest
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j --target pmhwtest
@@ -126,11 +160,55 @@ jobs:
           grep -q "WS2812: #000010" emu0.log || { echo "нет синей вспышки ожидания"; exit 1; }
           grep -q "WS2812: #002800" emu0.log || { echo "нет зелёного (хранилище открыто)"; exit 1; }
 
+      # универсальная RP2040 (клоны): boot2_generic_03h, светодиод и на GP25, и WS2812 на GP16.
+      # Флеш отвечает на JEDEC как W25Q32 (4 МБ, как у RP2040_USB) при 2 МБ в описании платы:
+      # раньше прошивка падала здесь в hard_assert pico-sdk на первой записи — до USB
+      - name: Run generic RP2040 firmware in emulator (both LEDs, 4 MB flash)
+        working-directory: firmware/emu
+        run: |
+          EMU_FLASH_JEDEC=EF4016 EMU_WS2812=16 EMU_LED=25 node emu.js ../../pmtoken-rp2040-generic.uf2 47302 > emug.log 2>&1 &
+          for i in $(seq 60); do grep -q "CDC готов" emug.log && break; sleep 1; done
+          rc=0; timeout 900 ../../build/pmhwtest tcp:47302 || rc=$?
+          kill %1 || true
+          grep -v "запрос:" emug.log
+          [ $rc -eq 0 ] || exit $rc
+          grep -q "WS2812: #002800" emug.log || { echo "WS2812: нет зелёного (хранилище открыто)"; exit 1; }
+          grep -q "LED GPIO25: вкл" emug.log || { echo "GP25: светодиод не включался"; exit 1; }
+
+      # pmdiag: RAM-образ рядом с прошивкой во флеш; отчёт читается из CDC. Флеш в эмуляторе —
+      # заглушка (команды SPI отвечают нулями), поэтому проверяем только запуск из RAM, что
+      # этапы не виснут и что через окно XIP найдена прошивка pmtoken
+      - name: Run pmdiag in emulator
+        working-directory: firmware/emu
+        run: |
+          node emu.js ../../pmtoken-rp2040-generic.uf2,../../pmdiag-rp2040.uf2 47303 > emud.log 2>&1 &
+          for i in $(seq 60); do grep -q "CDC готов" emud.log && break; sleep 1; done
+          rc=0; timeout 300 node diag-report.js 47303 > report.txt || rc=$?
+          kill %1 || true
+          cat report.txt
+          [ $rc -eq 0 ] || exit $rc
+          grep -q "строка «pmtoken» найдена" report.txt || { echo "pmdiag не нашёл прошивку во флеш"; exit 1; }
+
+      # pmdiag_flash: диагностика как прошивка во флеш, шаги запуска pmtoken по одному
+      - name: Run pmdiag (flash) in emulator
+        working-directory: firmware/emu
+        run: |
+          node emu.js ../../pmdiag-flash-rp2040.uf2 47304 > emudf.log 2>&1 &
+          for i in $(seq 60); do grep -q "CDC готов" emudf.log && break; sleep 1; done
+          rc=0; timeout 300 node diag-report.js 47304 > report-flash.txt || rc=$?
+          kill %1 || true
+          cat report-flash.txt
+          [ $rc -eq 0 ] || exit $rc
+          grep -q "token_init (хранилище во флеш): ок" report-flash.txt || { echo "pmdiag_flash: token_init не прошёл"; exit 1; }
+
       - name: Upload firmware
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: firmware
-          path: pmtoken-*.uf2
+          path: |
+            pmtoken-*.uf2
+            pmdiag-rp2040.uf2
+            pmdiag-flash-rp2040.uf2
 
   windows:
     name: Windows x64 (MSVC + WPF)

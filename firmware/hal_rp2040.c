@@ -3,15 +3,17 @@
  * HAL для RP2040 (Pico) и RP2350 (Pico 2).
  *
  * flash: всё после первых FW_RESERVE (место под прошивку) до конца чипа; размер
- *        чипа — по JEDEC ID. Запись посекторно через flash_safe_execute
+ *        чипа — по JEDEC ID, но не больше PICO_FLASH_SIZE_BYTES (см. detect_flash).
+ *        Запись посекторно через flash_safe_execute
  *        (прерывания выключены только на один сектор), сторожевой таймер — между ними.
  * RAM:   буфер открытого хранилища — вся свободная куча после прошивки, поэтому
  *        ёмкость сама подстраивается под чип (RP2040 ~190 КБ, RP2350 ~450 КБ).
  * RNG:   пул BLAKE2b из нескольких независимых источников (pico_rand — на RP2350
  *        это аппаратный TRNG; биты ROSC; шум АЦП датчика температуры; время),
  *        выдача — «быстрое стирание ключа»: каждый вызов перешифровывает пул.
- * LED:   встроенный светодиод платы (GPIO 25 на Pico/Pico 2) или RGB WS2812 через PIO
- *        (RP2040-Zero и подобные: PICO_DEFAULT_WS2812_PIN из описания платы).
+ * LED:   встроенный светодиод платы (PICO_DEFAULT_LED_PIN: GPIO 25 на Pico/Pico 2) и/или
+ *        RGB WS2812 через PIO (PICO_DEFAULT_WS2812_PIN: GPIO 16 на RP2040-Zero). Универсальная
+ *        сборка (boards/pmtoken_rp2040_generic.h) задаёт оба: какой стоит на клоне — неизвестно.
  */
 #include "board.h"
 #include "hal.h"
@@ -77,11 +79,19 @@ static void read_jedec(void *p)
     *(uint8_t *)p = rx[3];
 }
 
+/* Объём по JEDEC, но не больше PICO_FLASH_SIZE_BYTES из описания платы: flash_range_erase
+ * и flash_range_program в pico-sdk проверяют это hard_assert'ом, который и в релизной
+ * сборке не отключается. Без ограничения прошивка на плате с флеш больше описанной
+ * (RP2040_USB: 4 МБ при 2 МБ в pico.h) падала в panic на первой записи конфигурации —
+ * до USB. Больше и не нужно: ёмкость ограничена RAM, а не флеш. Чип меньше описанного —
+ * берём его размер, иначе запись в «конец» ушла бы по кругу на саму прошивку. */
 static void detect_flash(void)
 {
     uint8_t log2 = 0;
-    if (flash_safe_execute(read_jedec, &log2, 1000) == PICO_OK && log2 >= 20 && log2 <= 24)
-        g_flash_bytes = 1u << log2;    /* 1..16 МБ: окно XIP — 16 МБ */
+    if (flash_safe_execute(read_jedec, &log2, 1000) == PICO_OK && log2 >= 20 && log2 <= 24) {
+        uint32_t chip = 1u << log2;    /* 1..16 МБ: окно XIP — 16 МБ */
+        g_flash_bytes = chip < PICO_FLASH_SIZE_BYTES ? chip : PICO_FLASH_SIZE_BYTES;
+    }
 }
 
 uint8_t *hal_vault_buffer(size_t *cap)
@@ -260,34 +270,36 @@ static void ws2812_put(uint32_t rgb)
 void board_led_task(void)
 {
     uint64_t t = hal_millis();
+    bool err = t < g_error_until;
 #ifdef PICO_DEFAULT_WS2812_PIN
     uint32_t c;
-    if (t < g_error_until) c = (t / 100) % 2 ? RGB_ERROR : RGB_OFF;
+    if (err) c = (t / 100) % 2 ? RGB_ERROR : RGB_OFF;
     else switch (g_led) {
     case LED_UNLOCKED: c = RGB_UNLOCKED; break;
     case LED_SESSION:  c = t % 1000 < 120 ? RGB_SESSION : RGB_OFF; break;
     default:           c = t % 2000 < 120 ? RGB_IDLE : RGB_OFF; break;
     }
     ws2812_put(c);
-#elif defined(PICO_DEFAULT_LED_PIN)
+#endif
+#ifdef PICO_DEFAULT_LED_PIN
     bool on;
-    if (t < g_error_until) on = (t / 100) % 2;                     /* часто: ошибка */
+    if (err) on = (t / 100) % 2;                                   /* часто: ошибка */
     else switch (g_led) {
     case LED_UNLOCKED: on = true; break;                           /* горит: хранилище открыто */
     case LED_SESSION:  on = t % 1000 < 80; break;                  /* раз в секунду: сессия */
     default:           on = t % 3000 < 30; break;                  /* редкая вспышка: ждёт */
     }
     gpio_put(PICO_DEFAULT_LED_PIN, on);
-#else
-    (void)t;
 #endif
+    (void)err;
 }
 
 int board_init(void)
 {
 #ifdef PICO_DEFAULT_WS2812_PIN
     ws2812_init();
-#elif defined(PICO_DEFAULT_LED_PIN)
+#endif
+#ifdef PICO_DEFAULT_LED_PIN
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 #endif
